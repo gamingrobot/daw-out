@@ -1,0 +1,18 @@
+[package]
+name = "daw-out"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "937842d2c5a0fd7e4cb1f9969fa82c55527dd642" }
+# nih_plug = { path = "../nih_plug" }
+rosc = "0.7.0"
+crossbeam-channel = "0.5.4"
+parking_lot = "0.12.0"
+
+[workspace]
+members = ["xtask"]

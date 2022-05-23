@@ -1,0 +1,9 @@
+# https://github.com/robbert-vdh/nih-plug/blob/master/nih_plug_xtask/README.md
+
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nih_plug_xtask = { git = "https://github.com/robbert-vdh/nih-plug" }

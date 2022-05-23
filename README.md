@@ -1,2 +1,9 @@
 # daw-out
-VST Plugin for MIDI/OSC output
+
+VST3/CLAP Plugin for MIDI/OSC output
+
+## Building
+
+```
+cargo xtask bundle daw-out --release
+```
