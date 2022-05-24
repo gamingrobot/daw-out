@@ -6,6 +6,7 @@ use rosc::{OscMessage, OscMidiMessage, OscPacket, OscType};
 use std::net::UdpSocket;
 use std::sync::Arc;
 use std::thread;
+use std::thread::JoinHandle;
 
 struct DawOut {
     params: Arc<DawOutParams>,
@@ -42,7 +43,8 @@ struct DawOutParams {
     osc_server_port: RwLock<u16>,
     #[persist = "osc_address_base"]
     osc_address_base: RwLock<String>,
-
+    #[persist = "flag_send_midi"]
+    flag_send_midi: RwLock<bool>,
 
     //Exposed Params
     #[id = "param1"]
@@ -70,14 +72,15 @@ impl Default for DawOutParams {
             osc_server_address: RwLock::new("127.0.0.1".to_string()),
             osc_server_port: RwLock::new(9000),
             osc_address_base: RwLock::new("daw-out".to_string()),
-            param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param2: FloatParam::new("param2", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param3: FloatParam::new("param3", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param4: FloatParam::new("param4", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param5: FloatParam::new("param5", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param6: FloatParam::new("param6", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param7: FloatParam::new("param7", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
-            param8: FloatParam::new("param8", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }),
+            flag_send_midi: RwLock::new(true),
+            param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param1: {}", x))),
+            param2: FloatParam::new("param2", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param2: {}", x))),
+            param3: FloatParam::new("param3", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param3: {}", x))),
+            param4: FloatParam::new("param4", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param4: {}", x))),
+            param5: FloatParam::new("param5", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param5: {}", x))),
+            param6: FloatParam::new("param6", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param6: {}", x))),
+            param7: FloatParam::new("param7", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param7: {}", x))),
+            param8: FloatParam::new("param8", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param8: {}", x))),
         }
     }
 }
@@ -140,6 +143,9 @@ impl Plugin for DawOut {
 
         true
     }
+
+    // /<osc_address_base>/param/<param_name>
+    // /<osc_address_base>/midi
 
     fn process(
         &mut self,
@@ -209,6 +215,7 @@ fn write_thread(socket: UdpSocket, recv: Receiver<OscMessage>) -> () {
         nih_log!("Sent {:?} packet", packet);
     }
 }
+
 
 impl ClapPlugin for DawOut {
     const CLAP_ID: &'static str = "com.gamingrobot.daw-out";
