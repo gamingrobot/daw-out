@@ -174,11 +174,11 @@ impl Plugin for DawOut {
         _buffer: &mut Buffer,
         context: &mut impl ProcessContext,
     ) -> ProcessStatus {
-        //TODO: send param changes over OSC (maybe use param callbacks?)
         //TODO: should OSC MIDI port always be 0?
         //TODO: handle empty osc_address_base
         //TODO: better error handling
         //TODO: support other midi event types
+        //TODO: more generic param handling (less copy paste)
         let osc_address_base = self.params.osc_address_base.read();
         if let Some(sender) = &self.sender {
             //Process Dirty Params
