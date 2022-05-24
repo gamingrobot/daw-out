@@ -1,22 +1,34 @@
 use crossbeam_channel::{Receiver, Sender};
 use nih_plug::debug::*;
+use nih_plug::param;
 use nih_plug::prelude::*;
 use parking_lot::RwLock;
 use rosc::{OscMessage, OscMidiMessage, OscPacket, OscType};
 use std::net::UdpSocket;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
-use std::thread::JoinHandle;
 
 struct DawOut {
     params: Arc<DawOutParams>,
     sender: Option<Sender<OscMessage>>,
+    param1_dirty: Arc<AtomicBool>,
+    param2_dirty: Arc<AtomicBool>,
 }
 
 impl Default for DawOut {
     fn default() -> Self {
+        let param1_dirty = Arc::new(AtomicBool::new(false));
+        let param2_dirty = Arc::new(AtomicBool::new(false));
+
         Self {
-            params: Arc::new(DawOutParams::default()),
+            params: Arc::new(DawOutParams::new(
+                param1_dirty.clone(),
+                param2_dirty.clone(),
+            )),
+            param1_dirty,
+            param2_dirty,
             sender: None,
         }
     }
@@ -51,36 +63,46 @@ struct DawOutParams {
     param1: FloatParam,
     #[id = "param2"]
     param2: FloatParam,
-    #[id = "param3"]
-    param3: FloatParam,
-    #[id = "param4"]
-    param4: FloatParam,
-    #[id = "param5"]
-    param5: FloatParam,
-    #[id = "param6"]
-    param6: FloatParam,
-    #[id = "param7"]
-    param7: FloatParam,
-    #[id = "param8"]
-    param8: FloatParam,
+    // #[id = "param3"]
+    // param3: FloatParam,
+    // #[id = "param4"]
+    // param4: FloatParam,
+    // #[id = "param5"]
+    // param5: FloatParam,
+    // #[id = "param6"]
+    // param6: FloatParam,
+    // #[id = "param7"]
+    // param7: FloatParam,
+    // #[id = "param8"]
+    // param8: FloatParam,
 }
 
-impl Default for DawOutParams {
+impl DawOutParams {
     #[allow(clippy::derivable_impls)]
-    fn default() -> Self {
+    fn new(param1_dirty: Arc<AtomicBool>, param2_dirty: Arc<AtomicBool>) -> Self {
         Self {
             osc_server_address: RwLock::new("127.0.0.1".to_string()),
             osc_server_port: RwLock::new(9000),
             osc_address_base: RwLock::new("daw-out".to_string()),
             flag_send_midi: RwLock::new(true),
-            param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param1: {}", x))),
-            param2: FloatParam::new("param2", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param2: {}", x))),
-            param3: FloatParam::new("param3", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param3: {}", x))),
-            param4: FloatParam::new("param4", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param4: {}", x))),
-            param5: FloatParam::new("param5", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param5: {}", x))),
-            param6: FloatParam::new("param6", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param6: {}", x))),
-            param7: FloatParam::new("param7", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param7: {}", x))),
-            param8: FloatParam::new("param8", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param8: {}", x))),
+            param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |x| {
+                    nih_log!("param1: {}", x);
+                    param1_dirty.store(true, Ordering::Release)
+                })),
+            param2: FloatParam::new("param2", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |x| {
+                    nih_log!("param2: {}", x);
+                    param2_dirty.store(true, Ordering::Release)
+                })),
+            // param3: FloatParam::new("param3", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param3: {}", x))),
+            // param4: FloatParam::new("param4", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param4: {}", x))),
+            // param5: FloatParam::new("param5", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param5: {}", x))),
+            // param6: FloatParam::new("param6", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param6: {}", x))),
+            // param7: FloatParam::new("param7", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param7: {}", x))),
+            // param8: FloatParam::new("param8", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param8: {}", x))),
         }
     }
 }
@@ -109,7 +131,7 @@ impl Plugin for DawOut {
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
-    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
+    const SAMPLE_ACCURATE_AUTOMATION: bool = false;
 
     fn params(&self) -> Arc<dyn Params> {
         nih_log!("Params Called");
@@ -138,7 +160,7 @@ impl Plugin for DawOut {
 
         let osc_channel = OscChannel::default();
         self.sender = Some(osc_channel.sender);
-        //TODO: should we ever join?
+        //TODO: when should we join?
         let _client_thread = thread::spawn(move || write_thread(socket, osc_channel.receiver));
 
         true
@@ -159,6 +181,34 @@ impl Plugin for DawOut {
         //TODO: support other midi event types
         let osc_address_base = self.params.osc_address_base.read();
         if let Some(sender) = &self.sender {
+            //Process Dirty Params
+            if self
+                .param1_dirty
+                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                sender
+                    .send(OscMessage {
+                        addr: format!("/{}/param/{}", *osc_address_base, self.params.param1.name()),
+                        args: vec![OscType::Float(self.params.param1.value)],
+                    })
+                    .unwrap();
+            }
+
+            if self
+                .param2_dirty
+                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                sender
+                    .send(OscMessage {
+                        addr: format!("/{}/param/{}", *osc_address_base, self.params.param2.name()),
+                        args: vec![OscType::Float(self.params.param2.value)],
+                    })
+                    .unwrap();
+            }
+
+            //Process Note Events
             while let Some(event) = context.next_event() {
                 nih_log!("Event: {:?}", event);
                 match event {
@@ -215,7 +265,6 @@ fn write_thread(socket: UdpSocket, recv: Receiver<OscMessage>) -> () {
         nih_log!("Sent {:?} packet", packet);
     }
 }
-
 
 impl ClapPlugin for DawOut {
     const CLAP_ID: &'static str = "com.gamingrobot.daw-out";
