@@ -241,8 +241,6 @@ impl Plugin for DawOut {
     ) -> ProcessStatus {
         //TODO: better error handling
         //TODO: support other midi event types
-        //TODO: more generic param handling (less copy paste)
-        //TODO: check flag_send_midi
         let osc_address_base = self.params.osc_address_base.read();
         if let Some(sender) = &self.sender {
             //Process Dirty Params
@@ -340,6 +338,7 @@ impl Plugin for DawOut {
     }
 
     fn accepts_bus_config(&self, config: &BusConfig) -> bool {
+        nih_trace!("BusConfig: {:?}", config);
         config.num_input_channels == Self::DEFAULT_NUM_INPUTS
             && config.num_output_channels == Self::DEFAULT_NUM_OUTPUTS
     }
