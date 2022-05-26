@@ -1,8 +1,8 @@
 use crossbeam_channel::{Receiver, Sender};
 use nih_plug::debug::*;
-use nih_plug::param;
 use nih_plug::prelude::*;
 use parking_lot::RwLock;
+use parking_lot::RwLockReadGuard;
 use rosc::{OscMessage, OscMidiMessage, OscPacket, OscType};
 use std::net::UdpSocket;
 use std::sync::atomic::AtomicBool;
@@ -12,31 +12,63 @@ use std::thread;
 
 struct DawOut {
     params: Arc<DawOutParams>,
-    sender: Option<Sender<OscMessage>>,
-    param1_dirty: Arc<AtomicBool>,
-    param2_dirty: Arc<AtomicBool>,
+    sender: Option<Sender<OscChannelMessageType>>,
+    p1_dirty: Arc<AtomicBool>,
+    p2_dirty: Arc<AtomicBool>,
+    p3_dirty: Arc<AtomicBool>,
+    p4_dirty: Arc<AtomicBool>,
+    p5_dirty: Arc<AtomicBool>,
+    p6_dirty: Arc<AtomicBool>,
+    p7_dirty: Arc<AtomicBool>,
+    p8_dirty: Arc<AtomicBool>,
 }
 
 impl Default for DawOut {
     fn default() -> Self {
-        let param1_dirty = Arc::new(AtomicBool::new(false));
-        let param2_dirty = Arc::new(AtomicBool::new(false));
+        let p1_dirty = Arc::new(AtomicBool::new(false));
+        let p2_dirty = Arc::new(AtomicBool::new(false));
+        let p3_dirty = Arc::new(AtomicBool::new(false));
+        let p4_dirty = Arc::new(AtomicBool::new(false));
+        let p5_dirty = Arc::new(AtomicBool::new(false));
+        let p6_dirty = Arc::new(AtomicBool::new(false));
+        let p7_dirty = Arc::new(AtomicBool::new(false));
+        let p8_dirty = Arc::new(AtomicBool::new(false));
 
         Self {
             params: Arc::new(DawOutParams::new(
-                param1_dirty.clone(),
-                param2_dirty.clone(),
+                p1_dirty.clone(),
+                p2_dirty.clone(),
+                p3_dirty.clone(),
+                p4_dirty.clone(),
+                p5_dirty.clone(),
+                p6_dirty.clone(),
+                p7_dirty.clone(),
+                p8_dirty.clone(),
             )),
-            param1_dirty,
-            param2_dirty,
             sender: None,
+            p1_dirty,
+            p2_dirty,
+            p3_dirty,
+            p4_dirty,
+            p5_dirty,
+            p6_dirty,
+            p7_dirty,
+            p8_dirty,
+        }
+    }
+}
+
+impl Drop for DawOut {
+    fn drop(&mut self) {
+        if let Some(sender) = &self.sender {
+            sender.send(OscChannelMessageType::Exit).unwrap();
         }
     }
 }
 
 struct OscChannel {
-    sender: Sender<OscMessage>,
-    receiver: Receiver<OscMessage>,
+    sender: Sender<OscChannelMessageType>,
+    receiver: Receiver<OscChannelMessageType>,
 }
 
 impl Default for OscChannel {
@@ -44,6 +76,27 @@ impl Default for OscChannel {
         let (sender, receiver) = crossbeam_channel::bounded(65_536);
         Self { sender, receiver }
     }
+}
+
+struct OscParamType {
+    address_base: String,
+    name: String,
+    value: f32,
+}
+
+struct OscNoteType {
+    address_base: String,
+    channel: u8,
+    note: u8,
+    velocity: f32,
+}
+
+//TODO: osc server address/port update?
+enum OscChannelMessageType {
+    Exit,
+    Param(OscParamType),
+    NoteOn(OscNoteType),
+    NoteOff(OscNoteType),
 }
 
 #[derive(Params)]
@@ -63,23 +116,32 @@ struct DawOutParams {
     param1: FloatParam,
     #[id = "param2"]
     param2: FloatParam,
-    // #[id = "param3"]
-    // param3: FloatParam,
-    // #[id = "param4"]
-    // param4: FloatParam,
-    // #[id = "param5"]
-    // param5: FloatParam,
-    // #[id = "param6"]
-    // param6: FloatParam,
-    // #[id = "param7"]
-    // param7: FloatParam,
-    // #[id = "param8"]
-    // param8: FloatParam,
+    #[id = "param3"]
+    param3: FloatParam,
+    #[id = "param4"]
+    param4: FloatParam,
+    #[id = "param5"]
+    param5: FloatParam,
+    #[id = "param6"]
+    param6: FloatParam,
+    #[id = "param7"]
+    param7: FloatParam,
+    #[id = "param8"]
+    param8: FloatParam,
 }
 
 impl DawOutParams {
     #[allow(clippy::derivable_impls)]
-    fn new(param1_dirty: Arc<AtomicBool>, param2_dirty: Arc<AtomicBool>) -> Self {
+    fn new(
+        p1_dirty: Arc<AtomicBool>,
+        p2_dirty: Arc<AtomicBool>,
+        p3_dirty: Arc<AtomicBool>,
+        p4_dirty: Arc<AtomicBool>,
+        p5_dirty: Arc<AtomicBool>,
+        p6_dirty: Arc<AtomicBool>,
+        p7_dirty: Arc<AtomicBool>,
+        p8_dirty: Arc<AtomicBool>,
+    ) -> Self {
         Self {
             osc_server_address: RwLock::new("127.0.0.1".to_string()),
             osc_server_port: RwLock::new(9000),
@@ -87,35 +149,30 @@ impl DawOutParams {
             flag_send_midi: RwLock::new(true),
             param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01)
-                .with_callback(Arc::new(move |x| {
-                    nih_log!("param1: {}", x);
-                    param1_dirty.store(true, Ordering::Release)
-                })),
+                .with_callback(Arc::new(move |_x| p1_dirty.store(true, Ordering::Release))),
             param2: FloatParam::new("param2", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01)
-                .with_callback(Arc::new(move |x| {
-                    nih_log!("param2: {}", x);
-                    param2_dirty.store(true, Ordering::Release)
-                })),
-            // param3: FloatParam::new("param3", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param3: {}", x))),
-            // param4: FloatParam::new("param4", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param4: {}", x))),
-            // param5: FloatParam::new("param5", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param5: {}", x))),
-            // param6: FloatParam::new("param6", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param6: {}", x))),
-            // param7: FloatParam::new("param7", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param7: {}", x))),
-            // param8: FloatParam::new("param8", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 }).with_step_size(0.01).with_callback(Arc::new(|x| nih_log!("param8: {}", x))),
+                .with_callback(Arc::new(move |_x| p2_dirty.store(true, Ordering::Release))),
+            param3: FloatParam::new("param3", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |_x| p3_dirty.store(true, Ordering::Release))),
+            param4: FloatParam::new("param4", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |_x| p4_dirty.store(true, Ordering::Release))),
+            param5: FloatParam::new("param5", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |_x| p5_dirty.store(true, Ordering::Release))),
+            param6: FloatParam::new("param6", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |_x| p6_dirty.store(true, Ordering::Release))),
+            param7: FloatParam::new("param7", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |_x| p7_dirty.store(true, Ordering::Release))),
+            param8: FloatParam::new("param8", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
+                .with_step_size(0.01)
+                .with_callback(Arc::new(move |_x| p8_dirty.store(true, Ordering::Release))),
         }
     }
-}
-
-enum OscMidiMessageType {
-    NoteOff = 0x80,
-    NoteOn = 0x90,
-    // PolyPressure = 0xA0,
-    // ControlChange = 0xB0,
-    // ProgramChange = 0xC0,
-    // ChannelPressure = 0xD0,
-    // PitchBend = 0xE0,
-    // SystemExclusive = 0xF0,
 }
 
 impl Plugin for DawOut {
@@ -134,17 +191,22 @@ impl Plugin for DawOut {
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
 
     fn params(&self) -> Arc<dyn Params> {
-        nih_log!("Params Called");
+        nih_trace!("Params Called");
         self.params.clone() as Arc<dyn Params>
     }
 
     fn initialize(
         &mut self,
         _bus_config: &BusConfig,
-        _buffer_config: &BufferConfig,
+        buffer_config: &BufferConfig,
         _context: &mut impl ProcessContext,
     ) -> bool {
-        nih_log!("Initialize Called");
+        nih_trace!("Initialize Called");
+
+        if buffer_config.process_mode != ProcessMode::Realtime {
+            nih_trace!("Plugin is not in realtime mode, bailing!");
+            return false;
+        }
 
         //Setup OSC client
         //TODO: cleanup, better error handling
@@ -154,115 +216,207 @@ impl Plugin for DawOut {
             *self.params.osc_server_address.read(),
             *self.params.osc_server_port.read()
         );
-        nih_log!("Connecting: {}", ip_port);
+        nih_trace!("Connecting: {}", ip_port);
         socket.connect(ip_port).expect("Connection failed");
-        nih_log!("Connected!");
+        nih_trace!("Connected!");
 
         let osc_channel = OscChannel::default();
         self.sender = Some(osc_channel.sender);
-        //TODO: when should we join?
-        let _client_thread = thread::spawn(move || write_thread(socket, osc_channel.receiver));
+        let _client_thread = thread::spawn(move || osc_client_worker(socket, osc_channel.receiver));
 
         true
     }
 
-    // /<osc_address_base>/param/<param_name>
-    // /<osc_address_base>/midi
+    // fn deactivate(&mut self) {
+    //     nih_trace!("Deactivate Called");
+    //     if let Some(sender) = &self.sender {
+    //         sender.send(OscChannelMessageType::Exit).unwrap();
+    //     }
+    // }
 
     fn process(
         &mut self,
         _buffer: &mut Buffer,
         context: &mut impl ProcessContext,
     ) -> ProcessStatus {
-        //TODO: should OSC MIDI port always be 0?
-        //TODO: handle empty osc_address_base
         //TODO: better error handling
         //TODO: support other midi event types
         //TODO: more generic param handling (less copy paste)
+        //TODO: check flag_send_midi
         let osc_address_base = self.params.osc_address_base.read();
         if let Some(sender) = &self.sender {
             //Process Dirty Params
-            if self
-                .param1_dirty
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                sender
-                    .send(OscMessage {
-                        addr: format!("/{}/param/{}", *osc_address_base, self.params.param1.name()),
-                        args: vec![OscType::Float(self.params.param1.value)],
-                    })
-                    .unwrap();
-            }
-
-            if self
-                .param2_dirty
-                .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
-                sender
-                    .send(OscMessage {
-                        addr: format!("/{}/param/{}", *osc_address_base, self.params.param2.name()),
-                        args: vec![OscType::Float(self.params.param2.value)],
-                    })
-                    .unwrap();
-            }
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p1_dirty,
+                &self.params.param1,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p2_dirty,
+                &self.params.param2,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p3_dirty,
+                &self.params.param3,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p4_dirty,
+                &self.params.param4,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p5_dirty,
+                &self.params.param5,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p6_dirty,
+                &self.params.param6,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p7_dirty,
+                &self.params.param7,
+            );
+            send_dirty_param(
+                sender,
+                &osc_address_base,
+                &self.p8_dirty,
+                &self.params.param8,
+            );
 
             //Process Note Events
-            while let Some(event) = context.next_event() {
-                nih_log!("Event: {:?}", event);
-                match event {
-                    NoteEvent::NoteOn {
-                        timing: _,
-                        channel,
-                        note,
-                        velocity,
-                    } => sender
-                        .send(OscMessage {
-                            addr: format!("/{}/midi", *osc_address_base),
-                            args: vec![OscType::Midi(OscMidiMessage {
-                                port: 0,
-                                status: (OscMidiMessageType::NoteOn as u8 | channel),
-                                data1: note,
-                                data2: (velocity * 127.0) as u8,
-                            })],
-                        })
-                        .unwrap(),
-                    NoteEvent::NoteOff {
-                        timing: _,
-                        channel,
-                        note,
-                        velocity,
-                    } => sender
-                        .send(OscMessage {
-                            addr: format!("/{}/midi", *osc_address_base),
-                            args: vec![OscType::Midi(OscMidiMessage {
-                                port: 0,
-                                status: (OscMidiMessageType::NoteOff as u8 | channel),
-                                data1: note,
-                                data2: (velocity * 127.0) as u8,
-                            })],
-                        })
-                        .unwrap(),
-                    _ => {}
+            let should_send_midi = *self.params.flag_send_midi.read();
+            if should_send_midi {
+                while let Some(event) = context.next_event() {
+                    nih_trace!("Event: {:?}", event);
+                    match event {
+                        NoteEvent::NoteOn {
+                            timing: _,
+                            channel,
+                            note,
+                            velocity,
+                        } => sender
+                            .send(OscChannelMessageType::NoteOn(OscNoteType {
+                                address_base: osc_address_base.to_string(),
+                                channel,
+                                note,
+                                velocity,
+                            }))
+                            .unwrap(),
+                        NoteEvent::NoteOff {
+                            timing: _,
+                            channel,
+                            note,
+                            velocity,
+                        } => sender
+                            .send(OscChannelMessageType::NoteOff(OscNoteType {
+                                address_base: osc_address_base.to_string(),
+                                channel,
+                                note,
+                                velocity,
+                            }))
+                            .unwrap(),
+                        _ => {}
+                    }
                 }
             }
         }
-
         ProcessStatus::Normal
+    }
+
+    fn editor(&self) -> Option<Box<dyn Editor>> {
+        None
+    }
+
+    fn accepts_bus_config(&self, config: &BusConfig) -> bool {
+        config.num_input_channels == Self::DEFAULT_NUM_INPUTS
+            && config.num_output_channels == Self::DEFAULT_NUM_OUTPUTS
     }
 }
 
-fn write_thread(socket: UdpSocket, recv: Receiver<OscMessage>) -> () {
+fn send_dirty_param(
+    sender: &Sender<OscChannelMessageType>,
+    osc_address_base: &RwLockReadGuard<String>,
+    param_dirty: &Arc<AtomicBool>,
+    param: &FloatParam,
+) {
+    if param_dirty
+        .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        nih_trace!("Param Dirty: {} {}", param.name(), param.value);
+        sender
+            .send(OscChannelMessageType::Param(OscParamType {
+                address_base: osc_address_base.to_string(),
+                name: param.name().to_string(),
+                value: param.value,
+            }))
+            .unwrap();
+    }
+}
+
+enum OscMidiMessageType {
+    NoteOff = 0x80,
+    NoteOn = 0x90,
+    // PolyPressure = 0xA0,
+    // ControlChange = 0xB0,
+    // ProgramChange = 0xC0,
+    // ChannelPressure = 0xD0,
+    // PitchBend = 0xE0,
+    // SystemExclusive = 0xF0,
+}
+
+// /<osc_address_base>/param/<param_name>
+// /<osc_address_base>/midi
+
+fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -> () {
     //TODO: remove expects
-    while let Some(message) = recv.recv().ok() {
-        let packet = OscPacket::Message(message);
+    //TODO: should OSC MIDI port always be 0?
+    //TODO: handle empty osc_address_base
+    while let Some(channel_message) = recv.recv().ok() {
+        let osc_message = match channel_message {
+            OscChannelMessageType::Exit => break,
+            OscChannelMessageType::Param(message) => OscMessage {
+                addr: format!("/{}/param/{}", message.address_base, message.name),
+                args: vec![OscType::Float(message.value)],
+            },
+            OscChannelMessageType::NoteOn(message) => OscMessage {
+                addr: format!("/{}/midi", message.address_base),
+                args: vec![OscType::Midi(OscMidiMessage {
+                    port: 0,
+                    status: (OscMidiMessageType::NoteOn as u8 | message.channel),
+                    data1: message.note,
+                    data2: (message.velocity * 127.0) as u8,
+                })],
+            },
+            OscChannelMessageType::NoteOff(message) => OscMessage {
+                addr: format!("/{}/midi", message.address_base),
+                args: vec![OscType::Midi(OscMidiMessage {
+                    port: 0,
+                    status: (OscMidiMessageType::NoteOff as u8 | message.channel),
+                    data1: message.note,
+                    data2: (message.velocity * 127.0) as u8,
+                })],
+            },
+        };
+        let packet = OscPacket::Message(osc_message);
         let buf = rosc::encoder::encode(&packet).expect("Bad OSC Data");
         let len = socket.send(&buf[..]).expect("Failed to send data");
         if len != buf.len() {
-            nih_log!("UDP packet not fully sent");
+            nih_trace!("UDP packet not fully sent");
         }
-        nih_log!("Sent {:?} packet", packet);
+        nih_trace!("Sent {:?} packet", packet);
     }
 }
 
