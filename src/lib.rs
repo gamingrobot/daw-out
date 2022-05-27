@@ -227,12 +227,12 @@ impl Plugin for DawOut {
         true
     }
 
-    // fn deactivate(&mut self) {
-    //     nih_trace!("Deactivate Called");
-    //     if let Some(sender) = &self.sender {
-    //         sender.send(OscChannelMessageType::Exit).unwrap();
-    //     }
-    // }
+    fn deactivate(&mut self) {
+        nih_trace!("Deactivate Called");
+        if let Some(sender) = &self.sender {
+            sender.send(OscChannelMessageType::Exit).unwrap();
+        }
+    }
 
     fn process(
         &mut self,
