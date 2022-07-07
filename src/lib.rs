@@ -1,6 +1,7 @@
 use crossbeam_channel::{Receiver, Sender};
 use nih_plug::debug::*;
 use nih_plug::prelude::*;
+use nih_plug_vizia::ViziaState;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
 use rosc::{OscMessage, OscMidiMessage, OscPacket, OscType};
@@ -10,9 +11,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 
+mod editor;
+
 struct DawOut {
     params: Arc<DawOutParams>,
     sender: Option<Sender<OscChannelMessageType>>,
+    editor_state: Arc<ViziaState>,
     p1_dirty: Arc<AtomicBool>,
     p2_dirty: Arc<AtomicBool>,
     p3_dirty: Arc<AtomicBool>,
@@ -46,6 +50,7 @@ impl Default for DawOut {
                 p8_dirty.clone(),
             )),
             sender: None,
+            editor_state: editor::default_state(),
             p1_dirty,
             p2_dirty,
             p3_dirty,
@@ -189,17 +194,25 @@ impl Plugin for DawOut {
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = false;
+    const HARD_REALTIME_ONLY: bool = true;
 
     fn params(&self) -> Arc<dyn Params> {
         nih_trace!("Params Called");
         self.params.clone() as Arc<dyn Params>
     }
 
+    fn editor(&self) -> Option<Box<dyn Editor>> {
+        editor::create(
+            self.params.clone(),
+            self.editor_state.clone(),
+        )
+    }
+
     fn initialize(
         &mut self,
         _bus_config: &BusConfig,
         buffer_config: &BufferConfig,
-        _context: &mut impl ProcessContext,
+        _context: &mut impl InitContext,
     ) -> bool {
         nih_trace!("Initialize Called");
 
@@ -237,6 +250,7 @@ impl Plugin for DawOut {
     fn process(
         &mut self,
         _buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext,
     ) -> ProcessStatus {
         //TODO: better error handling
@@ -294,8 +308,7 @@ impl Plugin for DawOut {
             );
 
             //Process Note Events
-            let should_send_midi = *self.params.flag_send_midi.read();
-            if should_send_midi {
+            if *self.params.flag_send_midi.read() {
                 while let Some(event) = context.next_event() {
                     nih_trace!("Event: {:?}", event);
                     match event {
@@ -304,6 +317,7 @@ impl Plugin for DawOut {
                             channel,
                             note,
                             velocity,
+                            voice_id: _
                         } => sender
                             .send(OscChannelMessageType::NoteOn(OscNoteType {
                                 address_base: osc_address_base.to_string(),
@@ -317,6 +331,7 @@ impl Plugin for DawOut {
                             channel,
                             note,
                             velocity,
+                            voice_id: _    
                         } => sender
                             .send(OscChannelMessageType::NoteOff(OscNoteType {
                                 address_base: osc_address_base.to_string(),
@@ -332,11 +347,7 @@ impl Plugin for DawOut {
         }
         ProcessStatus::Normal
     }
-
-    fn editor(&self) -> Option<Box<dyn Editor>> {
-        None
-    }
-
+    
     fn accepts_bus_config(&self, config: &BusConfig) -> bool {
         nih_trace!("BusConfig: {:?}", config);
         config.num_input_channels == Self::DEFAULT_NUM_INPUTS
@@ -421,11 +432,14 @@ fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -
 
 impl ClapPlugin for DawOut {
     const CLAP_ID: &'static str = "com.gamingrobot.daw-out";
-    const CLAP_DESCRIPTION: &'static str = "Outputs MIDI/OSC information from the DAW";
-    const CLAP_FEATURES: &'static [&'static str] = &["note_effect", "utility"];
-    const CLAP_MANUAL_URL: &'static str = Self::URL;
-    const CLAP_SUPPORT_URL: &'static str = Self::URL;
-    const CLAP_HARD_REALTIME: bool = true;
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Outputs MIDI/OSC information from the DAW");
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Utility];
+
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+
+    const CLAP_POLY_MODULATION_CONFIG: Option<PolyModulationConfig> = None;
 }
 
 impl Vst3Plugin for DawOut {

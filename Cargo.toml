@@ -8,7 +8,8 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "7eee0b032e34e2cd8a7a9965dce97b8aa503b20e" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "8915723457c4eb41494a968dd383f73ad6f98e84" }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "8915723457c4eb41494a968dd383f73ad6f98e84" }
 # nih_plug = { path = "../nih_plug" }
 rosc = "0.7.0"
 crossbeam-channel = "0.5.4"
