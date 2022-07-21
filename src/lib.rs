@@ -230,7 +230,7 @@ impl Plugin for DawOut {
         nih_trace!("Initialize Called");
 
         if buffer_config.process_mode != ProcessMode::Realtime {
-            nih_trace!("Plugin is not in realtime mode, bailing!");
+            nih_log!("Plugin is not in realtime mode, bailing!");
             return false;
         }
 

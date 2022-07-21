@@ -1,4 +1,5 @@
 
+use nih_plug::debug::*;
 use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::widgets::*;
@@ -13,10 +14,40 @@ const POINT_SCALE: f32 = 0.75;
 
 #[derive(Lens)]
 struct DawOutEditor {
+    osc_server_address: String,
+    osc_server_port: u16,
+    osc_address_base: String,
     params: Arc<DawOutParams>,
 }
 
-impl Model for DawOutEditor {}
+pub enum DawOutEditorEvent {
+    SetOscServerAddress(String),
+    SetOscServerPort(u16),
+    SetOscAddressBase(String),
+}
+
+impl Model for DawOutEditor {
+    fn event(&mut self, _cx: &mut Context, event: &mut Event) {
+        event.map(|app_event, _| match app_event {
+            //TODO: inform osc thread in plugin that these have changed
+            DawOutEditorEvent::SetOscServerAddress(text) => {
+                nih_log!("Edit Event {}", text);
+                self.osc_server_address = text.clone();
+                *self.params.osc_server_address.write() = self.osc_server_address.clone();
+            }
+            DawOutEditorEvent::SetOscServerPort(port) => {
+                nih_log!("Edit Event {}", port);
+                self.osc_server_port = port.clone();
+                *self.params.osc_server_port.write() = self.osc_server_port.clone();
+            }
+            DawOutEditorEvent::SetOscAddressBase(text) => {
+                nih_log!("Edit Event {}", text);
+                self.osc_address_base = text.clone();
+                *self.params.osc_address_base.write() = self.osc_address_base.clone();
+            }
+        });
+    }
+}
 
 // Makes sense to also define this here, makes it a bit easier to keep track of
 pub(crate) fn default_state() -> Arc<ViziaState> {
@@ -31,12 +62,16 @@ pub(crate) fn create(
         //cx.add_theme(STYLE);
 
         DawOutEditor {
+            osc_server_address: params.osc_server_address.read().to_string(),
+            osc_server_port: *params.osc_server_port.read(),
+            osc_address_base: params.osc_address_base.read().to_string(),
             params: params.clone(),
         }
         .build(cx);
 
         //ResizeHandle::new(cx);
 
+        //TODO: cleanup styling, split settings into another view?
         VStack::new(cx, |cx| {
             Label::new(cx, "DAW Out")
                 .font(assets::NOTO_SANS_THIN)
@@ -46,6 +81,35 @@ pub(crate) fn create(
                 .child_bottom(Pixels(10.0));
             HStack::new(cx, |cx| {
                 VStack::new(cx, |cx| {
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "OSC Server Address").class("label");
+                        Textbox::new(cx, DawOutEditor::osc_server_address).on_edit(move |cx, text| {
+                                //TODO: validate
+                                cx.emit(DawOutEditorEvent::SetOscServerAddress(text));
+                            })
+                            .width(Pixels(115.0)); //180 - 60 - 5
+                            Textbox::new(cx, DawOutEditor::osc_server_port).on_edit(move |cx, text| {
+                                if let Ok(val) = text.parse::<u16>() {
+                                    cx.emit(DawOutEditorEvent::SetOscServerPort(val));
+                                    cx.toggle_class("invalid", false);
+                                } else {
+                                    cx.toggle_class("invalid", true);
+                                }
+                            })
+                            .width(Pixels(60.0));
+                    })
+                    .class("row")
+                    .col_between(Pixels(5.0));
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "OSC Address Base").class("label");
+                        Textbox::new(cx, DawOutEditor::osc_address_base).on_edit(move |cx, text| {
+                                //TODO: validate
+                                cx.emit(DawOutEditorEvent::SetOscAddressBase(text));
+                            })
+                            .width(Pixels(180.0));
+                    })
+                    .class("row")
+                    .col_between(Pixels(5.0));
                     HStack::new(cx, |cx| {
                         Label::new(cx, "Send MIDI").class("label");
                         ParamSlider::new(cx, DawOutEditor::params, |params| &params.flag_send_midi)
