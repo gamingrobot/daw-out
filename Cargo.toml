@@ -8,12 +8,13 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "8915723457c4eb41494a968dd383f73ad6f98e84" }
-nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "8915723457c4eb41494a968dd383f73ad6f98e84" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "2c9945db793744004a4e01fe5aa60091a305de08" }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "2c9945db793744004a4e01fe5aa60091a305de08" }
 # nih_plug = { path = "../nih_plug" }
 rosc = "0.7.0"
 crossbeam-channel = "0.5.4"
 parking_lot = "0.12.0"
+rubato = "0.12.0"
 
 [workspace]
 members = ["xtask"]
