@@ -1,10 +1,12 @@
-use nih_plug::prelude::Editor;
+use nih_plug::param;
+use nih_plug::prelude::{Editor, Param};
 use nih_plug_vizia::vizia::prelude::*;
 use nih_plug_vizia::widgets::*;
 use nih_plug_vizia::{assets, create_vizia_editor, ViziaState};
 use std::sync::Arc;
 
-use crate::{DawOutParams};
+use crate::param_view::ParamView;
+use crate::DawOutParams;
 
 /// VIZIA uses points instead of pixels for text
 const POINT_SCALE: f32 = 0.75;
@@ -45,17 +47,30 @@ pub(crate) fn create(
                 .child_top(Stretch(1.0))
                 .child_bottom(Pixels(10.0));
             HStack::new(cx, |cx| {
-                //TODO put toggles and OSC settings here instead of sliders
-                GenericUi::new(cx, DawOutEditor::params)
+                VStack::new(cx, |cx| {
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "Send MIDI").class("label");
+                        ParamSlider::new(cx, DawOutEditor::params, |params| &params.flag_send_midi)
+                            .class("widget");
+                    })
+                    .class("row")
+                    .col_between(Pixels(5.0));
+                    HStack::new(cx, |cx| {
+                        Label::new(cx, "Send Audio").class("label");
+                        ParamSlider::new(cx, DawOutEditor::params, |params| &params.flag_send_audio)
+                            .class("widget");
+                    })
+                    .class("row")
+                    .col_between(Pixels(5.0));
+                })
+                    .top(Pixels(10.0)) //make the colums align TODO move these to their own view?
                     .width(Auto)
                     .height(Auto)
-                    .child_top(Pixels(5.0))
-                    .child_right(Pixels(10.0));
-                GenericUi::new(cx, DawOutEditor::params)
+                    .row_between(Pixels(5.0))
+                    .child_left(Stretch(1.0));
+                ParamView::new(cx, DawOutEditor::params)
                     .width(Auto)
-                    .height(Auto)
-                    .child_top(Pixels(5.0))
-                    .child_right(Pixels(10.0));
+                    .height(Auto);
             });
         })
         .width(Percentage(100.0))

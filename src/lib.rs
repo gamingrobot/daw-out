@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::thread;
 
 mod editor;
+mod param_view;
 
 struct DawOut {
     params: Arc<DawOutParams>,
@@ -112,7 +113,7 @@ enum OscChannelMessageType {
 }
 
 #[derive(Params)]
-struct DawOutParams {
+pub struct DawOutParams {
     //Persisted Settings
     #[persist = "osc_server_address"]
     osc_server_address: RwLock<String>,
@@ -120,10 +121,12 @@ struct DawOutParams {
     osc_server_port: RwLock<u16>,
     #[persist = "osc_address_base"]
     osc_address_base: RwLock<String>,
-    #[persist = "flag_send_midi"]
-    flag_send_midi: RwLock<bool>,
-    #[persist = "flag_send_audio"]
-    flag_send_audio: RwLock<bool>,
+
+    //Setting Flags
+    #[id = "flag_send_midi"]
+    flag_send_midi: BoolParam,
+    #[id = "flag_send_audio"]
+    flag_send_audio: BoolParam,
 
     //Exposed Params
     #[id = "param1"]
@@ -160,8 +163,8 @@ impl DawOutParams {
             osc_server_address: RwLock::new("127.0.0.1".to_string()),
             osc_server_port: RwLock::new(9000),
             osc_address_base: RwLock::new("daw-out".to_string()),
-            flag_send_midi: RwLock::new(true),
-            flag_send_audio: RwLock::new(false),
+            flag_send_midi: BoolParam::new("flag_send_midi", true).hide().non_automatable(),
+            flag_send_audio: BoolParam::new("flag_send_audio", false).hide().non_automatable(),
             param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01)
                 .with_callback(Arc::new(move |_x| p1_dirty.store(true, Ordering::Release))),
@@ -318,7 +321,7 @@ impl Plugin for DawOut {
             );
 
             //Process Note Events
-            if *self.params.flag_send_midi.read() {
+            if self.params.flag_send_midi.value {
                 while let Some(event) = context.next_event() {
                     nih_trace!("NoteEvent: {:?}", event);
                     match event {
@@ -356,7 +359,7 @@ impl Plugin for DawOut {
             }
 
             //Process Audio Events
-            if *self.params.flag_send_audio.read() {
+            if self.params.flag_send_audio.value {
                 //TODO: deal with a create mono signal or send out multiple channels?
                 let mut resampler = FftFixedIn::<f32>::new(
                     44000,
