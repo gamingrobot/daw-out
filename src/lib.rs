@@ -15,7 +15,7 @@ use std::thread;
 mod editor;
 mod param_view;
 
-struct DawOut {
+pub struct DawOut {
     params: Arc<DawOutParams>,
     sender: Option<Sender<OscChannelMessageType>>,
     editor_state: Arc<ViziaState>,

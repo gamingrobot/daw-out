@@ -5,13 +5,15 @@ edition = "2021"
 license = "MIT"
 
 [lib]
-crate-type = ["cdylib"]
+# The `lib` artifact is needed for the standalone target
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "2c9945db793744004a4e01fe5aa60091a305de08" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "2c9945db793744004a4e01fe5aa60091a305de08", features = ["standalone"] } #, features = ["assert_process_allocs", "standalone"] }
 nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "2c9945db793744004a4e01fe5aa60091a305de08" }
-# nih_plug = { path = "../nih_plug" }
-rosc = "0.7.0"
+# nih_plug = { path = "../nih-plug", features = ["standalone"]}
+# nih_plug_vizia = { path = "../nih-plug/nih_plug_vizia" }
+rosc = "0.8.0"
 crossbeam-channel = "0.5.4"
 parking_lot = "0.12.0"
 rubato = "0.12.0"
