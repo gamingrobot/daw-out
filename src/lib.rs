@@ -16,7 +16,8 @@ mod param_view;
 
 pub struct DawOut {
     params: Arc<DawOutParams>,
-    sender: Option<Arc<Sender<OscChannelMessageType>>>,
+    sender: Arc<Sender<OscChannelMessageType>>,
+    receiver: Option<Receiver<OscChannelMessageType>>,
     editor_state: Arc<ViziaState>,
     p1_dirty: Arc<AtomicBool>,
     p2_dirty: Arc<AtomicBool>,
@@ -39,6 +40,7 @@ impl Default for DawOut {
         let p7_dirty = Arc::new(AtomicBool::new(false));
         let p8_dirty = Arc::new(AtomicBool::new(false));
 
+        let channel = OscChannel::default();
         Self {
             params: Arc::new(DawOutParams::new(
                 p1_dirty.clone(),
@@ -50,7 +52,8 @@ impl Default for DawOut {
                 p7_dirty.clone(),
                 p8_dirty.clone(),
             )),
-            sender: None,
+            sender: Arc::new(channel.sender),
+            receiver: Some(channel.receiver),
             editor_state: editor::default_state(),
             p1_dirty,
             p2_dirty,
@@ -66,9 +69,7 @@ impl Default for DawOut {
 
 impl Drop for DawOut {
     fn drop(&mut self) {
-        if let Some(sender) = &self.sender {
-            sender.send(OscChannelMessageType::Exit).unwrap();
-        }
+        self.sender.send(OscChannelMessageType::Exit).unwrap();
     }
 }
 
@@ -104,7 +105,7 @@ struct OscConnectionType {
     port: u16,
 }
 
-struct OscAddressType {
+struct OscAddressBaseType {
     address: String,
 }
 
@@ -112,7 +113,7 @@ struct OscAddressType {
 enum OscChannelMessageType {
     Exit,
     ConnectionChange(OscConnectionType),
-    AddressChange(OscAddressType),
+    AddressBaseChange(OscAddressBaseType),
     Param(OscParamType),
     NoteOn(OscNoteType),
     NoteOff(OscNoteType),
@@ -226,6 +227,7 @@ impl Plugin for DawOut {
     }
 
     fn editor(&self) -> Option<Box<dyn Editor>> {
+        nih_trace!("Editor Called");
         editor::create(self.params.clone(), self.sender.clone(), self.editor_state.clone())
     }
 
@@ -256,18 +258,15 @@ impl Plugin for DawOut {
 
         let address_base = self.params.osc_address_base.read().to_string();
 
-        let osc_channel = OscChannel::default();
-        self.sender = Some(Arc::new(osc_channel.sender));
-        let _client_thread = thread::spawn(move || osc_client_worker(socket, address_base, osc_channel.receiver));
+        let receiver = std::mem::replace(&mut self.receiver, None);
+        let _client_thread = thread::spawn(move || osc_client_worker(socket, address_base, receiver.unwrap()));
 
         true
     }
 
     fn deactivate(&mut self) {
         nih_trace!("Deactivate Called");
-        if let Some(sender) = &self.sender {
-            sender.send(OscChannelMessageType::Exit).unwrap();
-        }
+        self.sender.send(OscChannelMessageType::Exit).unwrap();
     }
 
     fn process(
@@ -278,113 +277,103 @@ impl Plugin for DawOut {
     ) -> ProcessStatus {
         //TODO: better error handling
         //TODO: support other midi event types
-        if let Some(sender) = &self.sender {
-            //Process Dirty Params
-            send_dirty_param(
-                sender,
-                &self.p1_dirty,
-                &self.params.param1,
-            );
-            send_dirty_param(
-                sender,
-                &self.p2_dirty,
-                &self.params.param2,
-            );
-            send_dirty_param(
-                sender,
-                &self.p3_dirty,
-                &self.params.param3,
-            );
-            send_dirty_param(
-                sender,
-                &self.p4_dirty,
-                &self.params.param4,
-            );
-            send_dirty_param(
-                sender,
-                &self.p5_dirty,
-                &self.params.param5,
-            );
-            send_dirty_param(
-                sender,
-                &self.p6_dirty,
-                &self.params.param6,
-            );
-            send_dirty_param(
-                sender,
-                &self.p7_dirty,
-                &self.params.param7,
-            );
-            send_dirty_param(
-                sender,
-                &self.p8_dirty,
-                &self.params.param8,
-            );
+        //Process Dirty Params
+        self.send_dirty_param(
+            &self.p1_dirty,
+            &self.params.param1,
+        );
+        self.send_dirty_param(
+            &self.p2_dirty,
+            &self.params.param2,
+        );
+        self.send_dirty_param(
+            &self.p3_dirty,
+            &self.params.param3,
+        );
+        self.send_dirty_param(
+            &self.p4_dirty,
+            &self.params.param4,
+        );
+        self.send_dirty_param(
+            &self.p5_dirty,
+            &self.params.param5,
+        );
+        self.send_dirty_param(
+            &self.p6_dirty,
+            &self.params.param6,
+        );
+        self.send_dirty_param(
+            &self.p7_dirty,
+            &self.params.param7,
+        );
+        self.send_dirty_param(
+            &self.p8_dirty,
+            &self.params.param8,
+        );
 
-            //Process Note Events
-            if self.params.flag_send_midi.value {
-                while let Some(event) = context.next_event() {
-                    nih_trace!("NoteEvent: {:?}", event);
-                    match event {
-                        NoteEvent::NoteOn {
-                            timing: _,
+        //Process Note Events
+        if self.params.flag_send_midi.value {
+            while let Some(event) = context.next_event() {
+                nih_trace!("NoteEvent: {:?}", event);
+                match event {
+                    NoteEvent::NoteOn {
+                        timing: _,
+                        channel,
+                        note,
+                        velocity,
+                        voice_id: _,
+                    } => self.sender
+                        .send(OscChannelMessageType::NoteOn(OscNoteType {
                             channel,
                             note,
                             velocity,
-                            voice_id: _,
-                        } => sender
-                            .send(OscChannelMessageType::NoteOn(OscNoteType {
-                                channel,
-                                note,
-                                velocity,
-                            }))
-                            .unwrap(),
-                        NoteEvent::NoteOff {
-                            timing: _,
-                            channel,
-                            note,
-                            velocity,
-                            voice_id: _,
-                        } => sender
-                            .send(OscChannelMessageType::NoteOff(OscNoteType {
-                                channel,
-                                note,
-                                velocity,
-                            }))
-                            .unwrap(),
-                        _ => {}
-                    }
-                }
-            }
-
-            //Process Audio Events
-            if self.params.flag_send_audio.value {
-                //TODO: deal with a create mono signal or send out multiple channels?
-                //TODO: dont allocate on audio thread
-                let mut resampler = FftFixedIn::<f32>::new(
-                    44000,
-                    100,
-                    buffer.len(),
-                    128, //let it calculate
-                    2,
-                )
-                .unwrap();
-
-                let downsampled = resampler.process(&buffer.as_slice(), None).unwrap();
-                //for channel in downsampled {
-                for &sample in &downsampled[0] {
-                    //only grab the first channel?
-                    if sample == 0.0 {
-                        continue;
-                    }
-                    sender
-                        .send(OscChannelMessageType::Audio(OscAudioType {
-                            value: sample,
                         }))
-                        .unwrap();
+                        .unwrap(),
+                    NoteEvent::NoteOff {
+                        timing: _,
+                        channel,
+                        note,
+                        velocity,
+                        voice_id: _,
+                    } => self.sender
+                        .send(OscChannelMessageType::NoteOff(OscNoteType {
+                            channel,
+                            note,
+                            velocity,
+                        }))
+                        .unwrap(),
+                    _ => {}
                 }
-                //}
             }
+        }
+
+        //Process Audio Events
+        if self.params.flag_send_audio.value {
+            //TODO: deal with a create mono signal or send out multiple channels?
+            //TODO: dont allocate on audio thread
+            let mut resampler = FftFixedIn::<f32>::new(
+                44000,
+                100,
+                buffer.len(),
+                128, //let it calculate
+                2,
+            )
+            .unwrap();
+
+            let downsampled = resampler.process(&buffer.as_slice(), None).unwrap();
+            //for channel in downsampled {
+            for &sample in &downsampled[0] {
+                //only grab the first channel?
+                if sample == 0.0 {
+                    continue;
+                }
+                self.sender
+                    .send(OscChannelMessageType::Audio(OscAudioType {
+                        value: sample,
+                    }))
+                    .unwrap();
+            }
+            //}
         }
         ProcessStatus::Normal
     }
@@ -396,22 +385,24 @@ impl Plugin for DawOut {
     }
 }
 
-fn send_dirty_param(
-    sender: &Sender<OscChannelMessageType>,
-    param_dirty: &Arc<AtomicBool>,
-    param: &FloatParam,
-) {
-    if param_dirty
-        .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
-        .is_ok()
-    {
-        nih_trace!("Param Dirty: {} {}", param.name(), param.value);
-        sender
-            .send(OscChannelMessageType::Param(OscParamType {
-                name: param.name().to_string(), //TODO: allocation
-                value: param.value,
-            }))
-            .unwrap();
+impl DawOut {
+    fn send_dirty_param(
+        &self,
+        param_dirty: &Arc<AtomicBool>,
+        param: &FloatParam,
+    ) {
+        if param_dirty
+            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            nih_trace!("Param Dirty: {} {}", param.name(), param.value);
+            self.sender
+                .send(OscChannelMessageType::Param(OscParamType {
+                    name: param.name().to_string(), //TODO: allocation
+                    value: param.value,
+                }))
+                .unwrap();
+        }
     }
 }
 
@@ -433,11 +424,13 @@ fn osc_client_worker(socket: UdpSocket, param_address_base: String, recv: Receiv
                     message.ip,
                     message.port
                 );
+                nih_trace!("Connection Change: {}", ip_port);
                 socket.connect(ip_port).expect("Connection failed");
                 continue;
             },
-            OscChannelMessageType::AddressChange(message) => {
+            OscChannelMessageType::AddressBaseChange(message) => {
                 address_base = message.address;
+                nih_trace!("AddressBase Change: {}", address_base);
                 continue;
             },
             OscChannelMessageType::Param(message) => OscMessage {

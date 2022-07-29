@@ -7,7 +7,7 @@ use nih_plug_vizia::{assets, create_vizia_editor, ViziaState};
 use std::sync::Arc;
 
 use crate::param_view::ParamView;
-use crate::{DawOutParams, OscChannelMessageType, OscConnectionType, OscAddressType};
+use crate::{DawOutParams, OscChannelMessageType, OscConnectionType, OscAddressBaseType};
 
 /// VIZIA uses points instead of pixels for text
 const POINT_SCALE: f32 = 0.75;
@@ -17,7 +17,7 @@ struct DawOutEditor {
     osc_server_address: String,
     osc_server_port: u16,
     osc_address_base: String,
-    sender: Option<Arc<Sender<OscChannelMessageType>>>,
+    sender: Arc<Sender<OscChannelMessageType>>,
     params: Arc<DawOutParams>,
 }
 
@@ -25,8 +25,8 @@ pub enum DawOutEditorEvent {
     SetOscServerAddress(String),
     SetOscServerPort(u16),
     SetOscAddressBase(String),
-    ConnectionChanged,
-    AddressBaseChanged,
+    ConnectionChange,
+    AddressBaseChange,
 }
 
 impl Model for DawOutEditor {
@@ -47,24 +47,20 @@ impl Model for DawOutEditor {
                 self.osc_address_base = text.clone();
                 *self.params.osc_address_base.write() = self.osc_address_base.clone();
             }
-            DawOutEditorEvent::ConnectionChanged => {
-                nih_trace!("Editor Connection Changed {}:{}", self.osc_server_address, self.osc_server_port);
-                if let Some(sender) = &self.sender {
-                    sender.send(OscChannelMessageType::ConnectionChange(OscConnectionType {
-                            ip: self.osc_server_address.clone(),
-                            port: self.osc_server_port,
-                        }))
-                        .unwrap();
-                }
-            }
-            DawOutEditorEvent::AddressBaseChanged => {
-                nih_trace!("Editor AddressBase Changed: {}", self.osc_address_base);
-                if let Some(sender) = &self.sender {
-                    sender.send(OscChannelMessageType::AddressChange(OscAddressType {
-                        address: self.osc_address_base.clone()
+            DawOutEditorEvent::ConnectionChange => {
+                nih_trace!("Connection Changed {}:{}", self.osc_server_address, self.osc_server_port);
+                self.sender.send(OscChannelMessageType::ConnectionChange(OscConnectionType {
+                        ip: self.osc_server_address.clone(),
+                        port: self.osc_server_port,
                     }))
                     .unwrap();
-                }
+            }
+            DawOutEditorEvent::AddressBaseChange => {
+                nih_trace!("AddressBase Changed: {}", self.osc_address_base);
+                self.sender.send(OscChannelMessageType::AddressBaseChange(OscAddressBaseType {
+                    address: self.osc_address_base.clone()
+                }))
+                .unwrap();
             }
         });
     }
@@ -77,7 +73,7 @@ pub(crate) fn default_state() -> Arc<ViziaState> {
 
 pub(crate) fn create(
     params: Arc<DawOutParams>,
-    sender: Option<Arc<Sender<OscChannelMessageType>>>,
+    sender: Arc<Sender<OscChannelMessageType>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, move |cx, _| {
@@ -112,7 +108,7 @@ pub(crate) fn create(
                                 cx.emit(DawOutEditorEvent::SetOscServerAddress(text));
                             })
                             .on_leave(|cx| {
-                                cx.emit(DawOutEditorEvent::ConnectionChanged);
+                                cx.emit(DawOutEditorEvent::ConnectionChange);
                             })
                             .width(Pixels(115.0)); //180 - 60 - 5
                         Textbox::new(cx, DawOutEditor::osc_server_port)
@@ -125,7 +121,7 @@ pub(crate) fn create(
                                 }
                             })
                             .on_leave(|cx| {
-                                cx.emit(DawOutEditorEvent::ConnectionChanged);
+                                cx.emit(DawOutEditorEvent::ConnectionChange);
                             })
                             .width(Pixels(60.0));
                     })
@@ -139,7 +135,7 @@ pub(crate) fn create(
                                 cx.emit(DawOutEditorEvent::SetOscAddressBase(text));
                             })
                             .on_leave(|cx| {
-                                cx.emit(DawOutEditorEvent::AddressBaseChanged);
+                                cx.emit(DawOutEditorEvent::AddressBaseChange);
                             })
                             .width(Pixels(180.0));
                     })
