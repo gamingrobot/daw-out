@@ -360,6 +360,7 @@ impl Plugin for DawOut {
             //Process Audio Events
             if self.params.flag_send_audio.value {
                 //TODO: deal with a create mono signal or send out multiple channels?
+                //TODO: dont allocate on audio thread
                 let mut resampler = FftFixedIn::<f32>::new(
                     44000,
                     100,
@@ -407,7 +408,7 @@ fn send_dirty_param(
         nih_trace!("Param Dirty: {} {}", param.name(), param.value);
         sender
             .send(OscChannelMessageType::Param(OscParamType {
-                name: param.name().to_string(),
+                name: param.name().to_string(), //TODO: allocation
                 value: param.value,
             }))
             .unwrap();

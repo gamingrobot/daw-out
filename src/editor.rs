@@ -33,22 +33,22 @@ impl Model for DawOutEditor {
     fn event(&mut self, _cx: &mut Context, event: &mut Event) {
         event.map(|app_event, _| match app_event {
             DawOutEditorEvent::SetOscServerAddress(text) => {
-                nih_log!("Edit Event {}", text);
+                nih_trace!("Edit Event {}", text);
                 self.osc_server_address = text.clone();
                 *self.params.osc_server_address.write() = self.osc_server_address.clone();
             }
             DawOutEditorEvent::SetOscServerPort(port) => {
-                nih_log!("Edit Event {}", port);
+                nih_trace!("Edit Event {}", port);
                 self.osc_server_port = port.clone();
                 *self.params.osc_server_port.write() = self.osc_server_port.clone();
             }
             DawOutEditorEvent::SetOscAddressBase(text) => {
-                nih_log!("Edit Event {}", text);
+                nih_trace!("Edit Event {}", text);
                 self.osc_address_base = text.clone();
                 *self.params.osc_address_base.write() = self.osc_address_base.clone();
             }
             DawOutEditorEvent::ConnectionChanged => {
-                nih_log!("Editor Connection Changed {}:{}", self.osc_server_address, self.osc_server_port);
+                nih_trace!("Editor Connection Changed {}:{}", self.osc_server_address, self.osc_server_port);
                 if let Some(sender) = &self.sender {
                     sender.send(OscChannelMessageType::ConnectionChange(OscConnectionType {
                             ip: self.osc_server_address.clone(),
@@ -58,7 +58,7 @@ impl Model for DawOutEditor {
                 }
             }
             DawOutEditorEvent::AddressBaseChanged => {
-                nih_log!("Editor AddressBase Changed: {}", self.osc_address_base);
+                nih_trace!("Editor AddressBase Changed: {}", self.osc_address_base);
                 if let Some(sender) = &self.sender {
                     sender.send(OscChannelMessageType::AddressChange(OscAddressType {
                         address: self.osc_address_base.clone()
