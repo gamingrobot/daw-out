@@ -210,7 +210,7 @@ impl Plugin for DawOut {
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
-    const SAMPLE_ACCURATE_AUTOMATION: bool = false;
+    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     const HARD_REALTIME_ONLY: bool = true;
 
     fn params(&self) -> Arc<dyn Params> {
