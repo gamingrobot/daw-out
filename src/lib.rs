@@ -4,8 +4,8 @@ use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
 use parking_lot::RwLock;
 use parking_lot::RwLockReadGuard;
-use rosc::{OscMessage, OscMidiMessage, OscPacket, OscType};
-use rubato::{Resampler, FftFixedIn};
+use rosc::{OscMessage, OscPacket, OscType};
+use rubato::{FftFixedIn, Resampler};
 use std::net::UdpSocket;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -163,8 +163,12 @@ impl DawOutParams {
             osc_server_address: RwLock::new("127.0.0.1".to_string()),
             osc_server_port: RwLock::new(9000),
             osc_address_base: RwLock::new("daw-out".to_string()),
-            flag_send_midi: BoolParam::new("flag_send_midi", true).hide().non_automatable(),
-            flag_send_audio: BoolParam::new("flag_send_audio", false).hide().non_automatable(),
+            flag_send_midi: BoolParam::new("flag_send_midi", true)
+                .hide()
+                .non_automatable(),
+            flag_send_audio: BoolParam::new("flag_send_audio", false)
+                .hide()
+                .non_automatable(),
             param1: FloatParam::new("param1", 0.0, FloatRange::Linear { min: 0.0, max: 1.0 })
                 .with_step_size(0.01)
                 .with_callback(Arc::new(move |_x| p1_dirty.store(true, Ordering::Release))),
@@ -215,10 +219,7 @@ impl Plugin for DawOut {
     }
 
     fn editor(&self) -> Option<Box<dyn Editor>> {
-        editor::create(
-            self.params.clone(),
-            self.editor_state.clone(),
-        )
+        editor::create(self.params.clone(), self.editor_state.clone())
     }
 
     fn initialize(
@@ -330,7 +331,7 @@ impl Plugin for DawOut {
                             channel,
                             note,
                             velocity,
-                            voice_id: _
+                            voice_id: _,
                         } => sender
                             .send(OscChannelMessageType::NoteOn(OscNoteType {
                                 address_base: osc_address_base.to_string(),
@@ -344,7 +345,7 @@ impl Plugin for DawOut {
                             channel,
                             note,
                             velocity,
-                            voice_id: _    
+                            voice_id: _,
                         } => sender
                             .send(OscChannelMessageType::NoteOff(OscNoteType {
                                 address_base: osc_address_base.to_string(),
@@ -367,26 +368,29 @@ impl Plugin for DawOut {
                     buffer.len(),
                     128, //let it calculate
                     2,
-                ).unwrap();
-                
+                )
+                .unwrap();
+
                 let downsampled = resampler.process(&buffer.as_slice(), None).unwrap();
                 //for channel in downsampled {
-                    for &sample in &downsampled[0] { //only grab the first channel?
-                        if sample == 0.0 {
-                            continue;
-                        }
-                        sender
+                for &sample in &downsampled[0] {
+                    //only grab the first channel?
+                    if sample == 0.0 {
+                        continue;
+                    }
+                    sender
                         .send(OscChannelMessageType::Audio(OscAudioType {
                             address_base: osc_address_base.to_string(),
                             value: sample,
-                        })).unwrap();
-                    }
+                        }))
+                        .unwrap();
+                }
                 //}
             }
         }
         ProcessStatus::Normal
     }
-    
+
     fn accepts_bus_config(&self, config: &BusConfig) -> bool {
         nih_trace!("BusConfig: {:?}", config);
         config.num_input_channels == Self::DEFAULT_NUM_INPUTS
@@ -415,19 +419,9 @@ fn send_dirty_param(
     }
 }
 
-enum OscMidiMessageType {
-    NoteOff = 0x80,
-    NoteOn = 0x90,
-    // PolyPressure = 0xA0,
-    // ControlChange = 0xB0,
-    // ProgramChange = 0xC0,
-    // ChannelPressure = 0xD0,
-    // PitchBend = 0xE0,
-    // SystemExclusive = 0xF0,
-}
-
 // /<osc_address_base>/param/<param_name>
-// /<osc_address_base>/midi
+// /<osc_address_base>/note_on <channel> <note> <velocity>
+// /<osc_address_base>/note_off <channel> <note> <velocity>
 // /<osc_address_base>/audio
 
 fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -> () {
@@ -442,22 +436,20 @@ fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -
                 args: vec![OscType::Float(message.value)],
             },
             OscChannelMessageType::NoteOn(message) => OscMessage {
-                addr: format!("/{}/midi", message.address_base),
-                args: vec![OscType::Midi(OscMidiMessage {
-                    port: 0,
-                    status: (OscMidiMessageType::NoteOn as u8 | message.channel),
-                    data1: message.note,
-                    data2: (message.velocity * 127.0) as u8,
-                })],
+                addr: format!("/{}/note_on", message.address_base),
+                args: vec![
+                    OscType::Int(message.channel as i32),
+                    OscType::Int(message.note as i32),
+                    OscType::Float(message.velocity),
+                ],
             },
             OscChannelMessageType::NoteOff(message) => OscMessage {
-                addr: format!("/{}/midi", message.address_base),
-                args: vec![OscType::Midi(OscMidiMessage {
-                    port: 0,
-                    status: (OscMidiMessageType::NoteOff as u8 | message.channel),
-                    data1: message.note,
-                    data2: (message.velocity * 127.0) as u8,
-                })],
+                addr: format!("/{}/note_off", message.address_base),
+                args: vec![
+                    OscType::Int(message.channel as i32),
+                    OscType::Int(message.note as i32),
+                    OscType::Float(message.velocity),
+                ],
             },
             OscChannelMessageType::Audio(message) => OscMessage {
                 addr: format!("/{}/audio", message.address_base),
@@ -476,7 +468,8 @@ fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -
 
 impl ClapPlugin for DawOut {
     const CLAP_ID: &'static str = "com.gamingrobot.daw-out";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("Outputs MIDI/OSC information from the DAW");
+    const CLAP_DESCRIPTION: Option<&'static str> =
+        Some("Outputs MIDI/OSC information from the DAW");
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Utility];
 
     const CLAP_MANUAL_URL: Option<&'static str> = None;
