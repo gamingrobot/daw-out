@@ -3,7 +3,6 @@ use nih_plug::debug::*;
 use nih_plug::prelude::*;
 use nih_plug_vizia::ViziaState;
 use parking_lot::RwLock;
-use parking_lot::RwLockReadGuard;
 use rosc::{OscMessage, OscPacket, OscType};
 use rubato::{FftFixedIn, Resampler};
 use std::net::UdpSocket;
@@ -17,7 +16,7 @@ mod param_view;
 
 pub struct DawOut {
     params: Arc<DawOutParams>,
-    sender: Option<Sender<OscChannelMessageType>>,
+    sender: Option<Arc<Sender<OscChannelMessageType>>>,
     editor_state: Arc<ViziaState>,
     p1_dirty: Arc<AtomicBool>,
     p2_dirty: Arc<AtomicBool>,
@@ -86,26 +85,34 @@ impl Default for OscChannel {
 }
 
 struct OscParamType {
-    address_base: String,
     name: String,
     value: f32,
 }
 
 struct OscNoteType {
-    address_base: String,
     channel: u8,
     note: u8,
     velocity: f32,
 }
 
 struct OscAudioType {
-    address_base: String,
     value: f32,
+}
+
+struct OscConnectionType {
+    ip: String,
+    port: u16,
+}
+
+struct OscAddressType {
+    address: String,
 }
 
 //TODO: osc server address/port update?
 enum OscChannelMessageType {
     Exit,
+    ConnectionChange(OscConnectionType),
+    AddressChange(OscAddressType),
     Param(OscParamType),
     NoteOn(OscNoteType),
     NoteOff(OscNoteType),
@@ -219,7 +226,7 @@ impl Plugin for DawOut {
     }
 
     fn editor(&self) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.editor_state.clone())
+        editor::create(self.params.clone(), self.sender.clone(), self.editor_state.clone())
     }
 
     fn initialize(
@@ -247,9 +254,11 @@ impl Plugin for DawOut {
         socket.connect(ip_port).expect("Connection failed");
         nih_trace!("Connected!");
 
+        let address_base = self.params.osc_address_base.read().to_string();
+
         let osc_channel = OscChannel::default();
-        self.sender = Some(osc_channel.sender);
-        let _client_thread = thread::spawn(move || osc_client_worker(socket, osc_channel.receiver));
+        self.sender = Some(Arc::new(osc_channel.sender));
+        let _client_thread = thread::spawn(move || osc_client_worker(socket, address_base, osc_channel.receiver));
 
         true
     }
@@ -269,54 +278,45 @@ impl Plugin for DawOut {
     ) -> ProcessStatus {
         //TODO: better error handling
         //TODO: support other midi event types
-        let osc_address_base = self.params.osc_address_base.read();
         if let Some(sender) = &self.sender {
             //Process Dirty Params
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p1_dirty,
                 &self.params.param1,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p2_dirty,
                 &self.params.param2,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p3_dirty,
                 &self.params.param3,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p4_dirty,
                 &self.params.param4,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p5_dirty,
                 &self.params.param5,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p6_dirty,
                 &self.params.param6,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p7_dirty,
                 &self.params.param7,
             );
             send_dirty_param(
                 sender,
-                &osc_address_base,
                 &self.p8_dirty,
                 &self.params.param8,
             );
@@ -334,7 +334,6 @@ impl Plugin for DawOut {
                             voice_id: _,
                         } => sender
                             .send(OscChannelMessageType::NoteOn(OscNoteType {
-                                address_base: osc_address_base.to_string(),
                                 channel,
                                 note,
                                 velocity,
@@ -348,7 +347,6 @@ impl Plugin for DawOut {
                             voice_id: _,
                         } => sender
                             .send(OscChannelMessageType::NoteOff(OscNoteType {
-                                address_base: osc_address_base.to_string(),
                                 channel,
                                 note,
                                 velocity,
@@ -380,7 +378,6 @@ impl Plugin for DawOut {
                     }
                     sender
                         .send(OscChannelMessageType::Audio(OscAudioType {
-                            address_base: osc_address_base.to_string(),
                             value: sample,
                         }))
                         .unwrap();
@@ -400,7 +397,6 @@ impl Plugin for DawOut {
 
 fn send_dirty_param(
     sender: &Sender<OscChannelMessageType>,
-    osc_address_base: &RwLockReadGuard<String>,
     param_dirty: &Arc<AtomicBool>,
     param: &FloatParam,
 ) {
@@ -411,7 +407,6 @@ fn send_dirty_param(
         nih_trace!("Param Dirty: {} {}", param.name(), param.value);
         sender
             .send(OscChannelMessageType::Param(OscParamType {
-                address_base: osc_address_base.to_string(),
                 name: param.name().to_string(),
                 value: param.value,
             }))
@@ -424,19 +419,32 @@ fn send_dirty_param(
 // /<osc_address_base>/note_off <channel> <note> <velocity>
 // /<osc_address_base>/audio
 
-fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -> () {
+fn osc_client_worker(socket: UdpSocket, param_address_base: String, recv: Receiver<OscChannelMessageType>) -> () {
     //TODO: remove expects
-    //TODO: should OSC MIDI port always be 0?
     //TODO: handle empty osc_address_base
+    let mut address_base = param_address_base;
     while let Some(channel_message) = recv.recv().ok() {
         let osc_message = match channel_message {
             OscChannelMessageType::Exit => break,
+            OscChannelMessageType::ConnectionChange(message) => {
+                let ip_port = format!(
+                    "{}:{}",
+                    message.ip,
+                    message.port
+                );
+                socket.connect(ip_port).expect("Connection failed");
+                continue;
+            },
+            OscChannelMessageType::AddressChange(message) => {
+                address_base = message.address;
+                continue;
+            },
             OscChannelMessageType::Param(message) => OscMessage {
-                addr: format!("/{}/param/{}", message.address_base, message.name),
+                addr: format!("/{}/param/{}", address_base, message.name),
                 args: vec![OscType::Float(message.value)],
             },
             OscChannelMessageType::NoteOn(message) => OscMessage {
-                addr: format!("/{}/note_on", message.address_base),
+                addr: format!("/{}/note_on", address_base),
                 args: vec![
                     OscType::Int(message.channel as i32),
                     OscType::Int(message.note as i32),
@@ -444,7 +452,7 @@ fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -
                 ],
             },
             OscChannelMessageType::NoteOff(message) => OscMessage {
-                addr: format!("/{}/note_off", message.address_base),
+                addr: format!("/{}/note_off", address_base),
                 args: vec![
                     OscType::Int(message.channel as i32),
                     OscType::Int(message.note as i32),
@@ -452,9 +460,10 @@ fn osc_client_worker(socket: UdpSocket, recv: Receiver<OscChannelMessageType>) -
                 ],
             },
             OscChannelMessageType::Audio(message) => OscMessage {
-                addr: format!("/{}/audio", message.address_base),
+                addr: format!("/{}/audio", address_base),
                 args: vec![OscType::Float(message.value)],
             },
+
         };
         let packet = OscPacket::Message(osc_message);
         let buf = rosc::encoder::encode(&packet).expect("Bad OSC Data");

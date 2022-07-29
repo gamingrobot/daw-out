@@ -1,4 +1,4 @@
-
+use crossbeam_channel::Sender;
 use nih_plug::debug::*;
 use nih_plug::prelude::Editor;
 use nih_plug_vizia::vizia::prelude::*;
@@ -7,7 +7,7 @@ use nih_plug_vizia::{assets, create_vizia_editor, ViziaState};
 use std::sync::Arc;
 
 use crate::param_view::ParamView;
-use crate::DawOutParams;
+use crate::{DawOutParams, OscChannelMessageType, OscConnectionType, OscAddressType};
 
 /// VIZIA uses points instead of pixels for text
 const POINT_SCALE: f32 = 0.75;
@@ -17,6 +17,7 @@ struct DawOutEditor {
     osc_server_address: String,
     osc_server_port: u16,
     osc_address_base: String,
+    sender: Option<Arc<Sender<OscChannelMessageType>>>,
     params: Arc<DawOutParams>,
 }
 
@@ -24,12 +25,13 @@ pub enum DawOutEditorEvent {
     SetOscServerAddress(String),
     SetOscServerPort(u16),
     SetOscAddressBase(String),
+    ConnectionChanged,
+    AddressBaseChanged,
 }
 
 impl Model for DawOutEditor {
     fn event(&mut self, _cx: &mut Context, event: &mut Event) {
         event.map(|app_event, _| match app_event {
-            //TODO: inform osc thread in plugin that these have changed
             DawOutEditorEvent::SetOscServerAddress(text) => {
                 nih_log!("Edit Event {}", text);
                 self.osc_server_address = text.clone();
@@ -45,6 +47,25 @@ impl Model for DawOutEditor {
                 self.osc_address_base = text.clone();
                 *self.params.osc_address_base.write() = self.osc_address_base.clone();
             }
+            DawOutEditorEvent::ConnectionChanged => {
+                nih_log!("Editor Connection Changed {}:{}", self.osc_server_address, self.osc_server_port);
+                if let Some(sender) = &self.sender {
+                    sender.send(OscChannelMessageType::ConnectionChange(OscConnectionType {
+                            ip: self.osc_server_address.clone(),
+                            port: self.osc_server_port,
+                        }))
+                        .unwrap();
+                }
+            }
+            DawOutEditorEvent::AddressBaseChanged => {
+                nih_log!("Editor AddressBase Changed: {}", self.osc_address_base);
+                if let Some(sender) = &self.sender {
+                    sender.send(OscChannelMessageType::AddressChange(OscAddressType {
+                        address: self.osc_address_base.clone()
+                    }))
+                    .unwrap();
+                }
+            }
         });
     }
 }
@@ -56,6 +77,7 @@ pub(crate) fn default_state() -> Arc<ViziaState> {
 
 pub(crate) fn create(
     params: Arc<DawOutParams>,
+    sender: Option<Arc<Sender<OscChannelMessageType>>>,
     editor_state: Arc<ViziaState>,
 ) -> Option<Box<dyn Editor>> {
     create_vizia_editor(editor_state, move |cx, _| {
@@ -65,6 +87,7 @@ pub(crate) fn create(
             osc_server_address: params.osc_server_address.read().to_string(),
             osc_server_port: *params.osc_server_port.read(),
             osc_address_base: params.osc_address_base.read().to_string(),
+            sender: sender.clone(),
             params: params.clone(),
         }
         .build(cx);
@@ -83,12 +106,17 @@ pub(crate) fn create(
                 VStack::new(cx, |cx| {
                     HStack::new(cx, |cx| {
                         Label::new(cx, "OSC Server Address").class("label");
-                        Textbox::new(cx, DawOutEditor::osc_server_address).on_edit(move |cx, text| {
+                        Textbox::new(cx, DawOutEditor::osc_server_address)
+                            .on_edit(move |cx, text| {
                                 //TODO: validate
                                 cx.emit(DawOutEditorEvent::SetOscServerAddress(text));
                             })
+                            .on_leave(|cx| {
+                                cx.emit(DawOutEditorEvent::ConnectionChanged);
+                            })
                             .width(Pixels(115.0)); //180 - 60 - 5
-                            Textbox::new(cx, DawOutEditor::osc_server_port).on_edit(move |cx, text| {
+                        Textbox::new(cx, DawOutEditor::osc_server_port)
+                            .on_edit(move |cx, text| {
                                 if let Ok(val) = text.parse::<u16>() {
                                     cx.emit(DawOutEditorEvent::SetOscServerPort(val));
                                     cx.toggle_class("invalid", false);
@@ -96,15 +124,22 @@ pub(crate) fn create(
                                     cx.toggle_class("invalid", true);
                                 }
                             })
+                            .on_leave(|cx| {
+                                cx.emit(DawOutEditorEvent::ConnectionChanged);
+                            })
                             .width(Pixels(60.0));
                     })
                     .class("row")
                     .col_between(Pixels(5.0));
                     HStack::new(cx, |cx| {
                         Label::new(cx, "OSC Address Base").class("label");
-                        Textbox::new(cx, DawOutEditor::osc_address_base).on_edit(move |cx, text| {
+                        Textbox::new(cx, DawOutEditor::osc_address_base)
+                            .on_edit(move |cx, text| {
                                 //TODO: validate
                                 cx.emit(DawOutEditorEvent::SetOscAddressBase(text));
+                            })
+                            .on_leave(|cx| {
+                                cx.emit(DawOutEditorEvent::AddressBaseChanged);
                             })
                             .width(Pixels(180.0));
                     })
@@ -119,17 +154,19 @@ pub(crate) fn create(
                     .col_between(Pixels(5.0));
                     HStack::new(cx, |cx| {
                         Label::new(cx, "Send Audio").class("label");
-                        ParamSlider::new(cx, DawOutEditor::params, |params| &params.flag_send_audio)
-                            .class("widget");
+                        ParamSlider::new(cx, DawOutEditor::params, |params| {
+                            &params.flag_send_audio
+                        })
+                        .class("widget");
                     })
                     .class("row")
                     .col_between(Pixels(5.0));
                 })
-                    .top(Pixels(10.0)) //make the colums align TODO move these to their own view?
-                    .width(Auto)
-                    .height(Auto)
-                    .row_between(Pixels(5.0))
-                    .child_left(Stretch(1.0));
+                .top(Pixels(10.0)) //make the colums align TODO move these to their own view?
+                .width(Auto)
+                .height(Auto)
+                .row_between(Pixels(5.0))
+                .child_left(Stretch(1.0));
                 ParamView::new(cx, DawOutEditor::params)
                     .width(Auto)
                     .height(Auto);
