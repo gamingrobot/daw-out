@@ -157,15 +157,15 @@ pub(crate) fn create(
                     })
                     .class("row")
                     .col_between(Pixels(5.0));
-                    HStack::new(cx, |cx| {
-                        Label::new(cx, "OSC Audio Sample Rate").class("label");
-                        ParamSlider::new(cx, DawOutEditor::params, |params| {
-                            &params.osc_sample_rate
-                        })
-                        .class("widget");
-                    })
-                    .class("row")
-                    .col_between(Pixels(5.0));
+                    // HStack::new(cx, |cx| {
+                    //     Label::new(cx, "OSC Audio Sample Rate").class("label");
+                    //     ParamSlider::new(cx, DawOutEditor::params, |params| {
+                    //         &params.osc_sample_rate
+                    //     })
+                    //     .class("widget");
+                    // })
+                    // .class("row")
+                    // .col_between(Pixels(5.0));
                 })
                 .top(Pixels(10.0)) //make the colums align TODO move these to their own view?
                 .width(Auto)
