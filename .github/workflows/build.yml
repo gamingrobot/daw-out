@@ -80,6 +80,8 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v1
         with:
-          files: "publish/*"
+          files: |
+            publish/daw-out-linux/daw-out-linux.zip
+            publish/daw-out-windows/daw-out-windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
