@@ -59,11 +59,11 @@ jobs:
         with:
           type: 'zip'
           filename: "daw-out-${{ matrix.name }}.zip"
-          path: target/bundled/
+          directory: target/bundled/
 
       - name: Publish
         if: startsWith(github.ref, 'refs/tags/')
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "daw-out-${{ matrix.name }}.zip"
+          artifacts: "target/bundled/daw-out-${{ matrix.name }}.zip"
           token: ${{ secrets.GITHUB_TOKEN }}
