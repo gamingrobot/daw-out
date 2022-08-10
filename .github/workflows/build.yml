@@ -41,7 +41,7 @@ jobs:
       - name: Set up Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2022-07-15
+          toolchain: stable
           profile: minimal
           default: true
 
