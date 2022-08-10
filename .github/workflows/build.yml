@@ -28,8 +28,8 @@ jobs:
     name: Build Test Package
     runs-on: ${{ matrix.os }}
     steps:
+      - uses: actions/checkout@v2
       - name: Fetch all git history
-        uses: actions/checkout@v2
         run: git fetch --force --prune --tags --unshallow
 
       - name: Install dependencies
