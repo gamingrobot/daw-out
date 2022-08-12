@@ -7,7 +7,7 @@ use nih_plug_vizia::{assets, create_vizia_editor, ViziaState};
 use std::sync::Arc;
 
 use crate::param_view::ParamView;
-use crate::{DawOutParams, OscChannelMessageType, OscConnectionType, OscAddressBaseType};
+use crate::{DawOutParams, OscAddressBaseType, OscChannelMessageType, OscConnectionType};
 
 /// VIZIA uses points instead of pixels for text
 const POINT_SCALE: f32 = 0.75;
@@ -48,19 +48,31 @@ impl Model for DawOutEditor {
                 *self.params.osc_address_base.write() = self.osc_address_base.clone();
             }
             DawOutEditorEvent::ConnectionChange => {
-                nih_trace!("Connection Changed {}:{}", self.osc_server_address, self.osc_server_port);
-                self.sender.send(OscChannelMessageType::ConnectionChange(OscConnectionType {
-                        ip: self.osc_server_address.clone(),
-                        port: self.osc_server_port,
-                    }))
-                    .unwrap();
+                nih_trace!(
+                    "Connection Changed {}:{}",
+                    self.osc_server_address,
+                    self.osc_server_port
+                );
+                let send_result =
+                    self.sender
+                        .send(OscChannelMessageType::ConnectionChange(OscConnectionType {
+                            ip: self.osc_server_address.clone(),
+                            port: self.osc_server_port,
+                        }));
+                if send_result.is_err() {
+                    nih_error!("Failed to send ConnectionChange update {:?}", send_result.unwrap_err());
+                }
             }
             DawOutEditorEvent::AddressBaseChange => {
                 nih_trace!("AddressBase Changed: {}", self.osc_address_base);
-                self.sender.send(OscChannelMessageType::AddressBaseChange(OscAddressBaseType {
-                    address: self.osc_address_base.clone()
-                }))
-                .unwrap();
+                let send_result = self.sender.send(OscChannelMessageType::AddressBaseChange(
+                    OscAddressBaseType {
+                        address: self.osc_address_base.clone(),
+                    },
+                ));
+                if send_result.is_err() {
+                    nih_error!("Failed to send AddressBaseChange update {:?}", send_result.unwrap_err());
+                }
             }
         });
     }
@@ -90,6 +102,7 @@ pub(crate) fn create(
 
         //ResizeHandle::new(cx);
 
+        //TODO: add error view for errors
         //TODO: cleanup styling, split settings into another view?
         VStack::new(cx, |cx| {
             Label::new(cx, "DAW Out")

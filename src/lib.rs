@@ -1,3 +1,4 @@
+use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use nih_plug::debug::*;
 use nih_plug::prelude::*;
@@ -78,7 +79,13 @@ impl Default for DawOut {
 
 impl Drop for DawOut {
     fn drop(&mut self) {
-        self.sender.send(OscChannelMessageType::Exit).unwrap();
+        let exit_result = self.sender.send(OscChannelMessageType::Exit);
+        if exit_result.is_err() {
+            nih_error!(
+                "Failed to send shutdown to background thread {:?}",
+                exit_result.unwrap_err()
+            );
+        }
     }
 }
 
@@ -118,7 +125,6 @@ struct OscAddressBaseType {
     address: String,
 }
 
-//TODO: osc server address/port update?
 enum OscChannelMessageType {
     Exit,
     ConnectionChange(OscConnectionType),
@@ -269,47 +275,70 @@ impl Plugin for DawOut {
 
         //Setup resampler
         self.input_sample_rate = buffer_config.sample_rate;
-        let resampler = FftFixedOut::<f32>::new(
+        self.resampler = match FftFixedOut::<f32>::new(
             self.input_sample_rate as usize / 100, //TODO: is this right?
             self.params.osc_sample_rate.value as usize,
             100,
             2,
             2,
-        )
-        .unwrap();
+        ) {
+            Ok(sampler) => Some(sampler),
+            Err(e) => {
+                nih_error!(
+                    "Failed to create resampler, audio processing will be disabled {:?}",
+                    e
+                );
+                None
+            }
+        };
 
-        self.resampler_buffer = Some(resampler.output_buffer_allocate());
-        self.resampler = Some(resampler);
+        if let Some(resampler) = &self.resampler {
+            self.resampler_buffer = Some(resampler.output_buffer_allocate());
+        }
 
         //Setup OSC client
-        //TODO: cleanup, better error handling
-        let socket = UdpSocket::bind("0.0.0.0:0").expect("Could not bind to address");
+        let socket = match UdpSocket::bind("0.0.0.0:0") {
+            Ok(socket) => socket,
+            Err(e) => {
+                nih_error!("Failed to bind socket {:?}", e);
+                return false;
+            }
+        };
         let ip_port = format!(
             "{}:{}",
             *self.params.osc_server_address.read(),
             *self.params.osc_server_port.read()
         );
         nih_trace!("Connecting: {}", ip_port);
-        socket.connect(ip_port).expect("Connection failed");
+        let connect_result = socket.connect(&ip_port);
+        if connect_result.is_err() {
+            nih_error!(
+                "Failed to connect socket to {} {:?}",
+                ip_port,
+                connect_result.unwrap_err()
+            );
+            return false;
+        }
         nih_trace!("Connected!");
 
         let address_base = self.params.osc_address_base.read().to_string();
 
+        //Dont remake the background thread if its already running
         if self.osc_thread.is_none() {
-            let receiver = std::mem::replace(&mut self.receiver, None);
-            let client_thread =
-                thread::spawn(move || osc_client_worker(socket, address_base, receiver.unwrap()));
+            if let Some(receiver) = std::mem::replace(&mut self.receiver, None) {
+                let client_thread =
+                    thread::spawn(move || osc_client_worker(socket, address_base, receiver));
 
-            self.osc_thread = Some(client_thread);
+                self.osc_thread = Some(client_thread);
+            } else {
+                nih_error!("Failed get thread channel receiver");
+                return false;
+            }
         }
-
         true
     }
 
-    fn deactivate(&mut self) {
-        nih_trace!("Deactivate Called");
-        self.sender.send(OscChannelMessageType::Exit).unwrap();
-    }
+    fn deactivate(&mut self) {}
 
     fn process(
         &mut self,
@@ -317,74 +346,29 @@ impl Plugin for DawOut {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext,
     ) -> ProcessStatus {
-        //TODO: better error handling
-        //TODO: support other midi event types
         //Process Dirty Params
-        self.send_dirty_param(&self.p1_dirty, &self.params.param1);
-        self.send_dirty_param(&self.p2_dirty, &self.params.param2);
-        self.send_dirty_param(&self.p3_dirty, &self.params.param3);
-        self.send_dirty_param(&self.p4_dirty, &self.params.param4);
-        self.send_dirty_param(&self.p5_dirty, &self.params.param5);
-        self.send_dirty_param(&self.p6_dirty, &self.params.param6);
-        self.send_dirty_param(&self.p7_dirty, &self.params.param7);
-        self.send_dirty_param(&self.p8_dirty, &self.params.param8);
-
+        let param_result = self.process_params();
+        if param_result.is_err() {
+            nih_error!("Failed to send params {:?}", param_result.unwrap_err());
+        }
         //Process Note Events
         if self.params.flag_send_midi.value {
             while let Some(event) = context.next_event() {
                 nih_trace!("NoteEvent: {:?}", event);
-                match event {
-                    NoteEvent::NoteOn {
-                        timing: _,
-                        channel,
-                        note,
-                        velocity,
-                        voice_id: _,
-                    } => self
-                        .sender
-                        .send(OscChannelMessageType::NoteOn(OscNoteType {
-                            channel,
-                            note,
-                            velocity,
-                        }))
-                        .unwrap(),
-                    NoteEvent::NoteOff {
-                        timing: _,
-                        channel,
-                        note,
-                        velocity,
-                        voice_id: _,
-                    } => self
-                        .sender
-                        .send(OscChannelMessageType::NoteOff(OscNoteType {
-                            channel,
-                            note,
-                            velocity,
-                        }))
-                        .unwrap(),
-                    _ => {}
+                let message_result = self.process_event(&event);
+                if message_result.is_err() {
+                    nih_error!(
+                        "Failed to process NoteEvent {:?}",
+                        message_result.unwrap_err()
+                    );
                 }
             }
         }
-
         //Process Audio Events
         if self.params.flag_send_audio.value {
-            if let Some(resampler) = &mut self.resampler {
-                if let Some(resampler_buffer) = &mut self.resampler_buffer {
-                    //TODO: deal with a create mono signal or send out multiple channels?
-                    resampler
-                        .process_into_buffer(&buffer.as_slice(), resampler_buffer, None)
-                        .unwrap();
-                    //TODO: we only use the first channel
-                    for &sample in &resampler_buffer[0] {
-                        if sample == 0.0 {
-                            continue;
-                        }
-                        self.sender
-                            .send(OscChannelMessageType::Audio(OscAudioType { value: sample }))
-                            .unwrap();
-                    }
-                }
+            let audio_result = self.process_audio_buffer(buffer);
+            if audio_result.is_err() {
+                nih_error!("Failed to process Audio {:?}", audio_result.unwrap_err());
             }
         }
         ProcessStatus::Normal
@@ -398,7 +382,19 @@ impl Plugin for DawOut {
 }
 
 impl DawOut {
-    fn send_dirty_param(&self, param_dirty: &Arc<AtomicBool>, param: &FloatParam) {
+    fn process_params(&self) -> Result<()> {
+        self.send_dirty_param(&self.p1_dirty, &self.params.param1)?;
+        self.send_dirty_param(&self.p2_dirty, &self.params.param2)?;
+        self.send_dirty_param(&self.p3_dirty, &self.params.param3)?;
+        self.send_dirty_param(&self.p4_dirty, &self.params.param4)?;
+        self.send_dirty_param(&self.p5_dirty, &self.params.param5)?;
+        self.send_dirty_param(&self.p6_dirty, &self.params.param6)?;
+        self.send_dirty_param(&self.p7_dirty, &self.params.param7)?;
+        self.send_dirty_param(&self.p8_dirty, &self.params.param8)?;
+        Ok(())
+    }
+
+    fn send_dirty_param(&self, param_dirty: &Arc<AtomicBool>, param: &FloatParam) -> Result<()> {
         if param_dirty
             .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
@@ -408,9 +404,65 @@ impl DawOut {
                 .send(OscChannelMessageType::Param(OscParamType {
                     name: param.name().to_string(), //TODO: allocation
                     value: param.value,
-                }))
-                .unwrap();
+                }))?;
         }
+        Ok(())
+    }
+
+    fn process_event(&self, event: &NoteEvent) -> Result<()> {
+        match *event {
+            NoteEvent::NoteOn {
+                timing: _,
+                channel,
+                note,
+                velocity,
+                voice_id: _,
+            } => self
+                .sender
+                .send(OscChannelMessageType::NoteOn(OscNoteType {
+                    channel,
+                    note,
+                    velocity,
+                }))?,
+            NoteEvent::NoteOff {
+                timing: _,
+                channel,
+                note,
+                velocity,
+                voice_id: _,
+            } => self
+                .sender
+                .send(OscChannelMessageType::NoteOff(OscNoteType {
+                    channel,
+                    note,
+                    velocity,
+                }))?,
+            _ => {}
+        };
+        Ok(())
+    }
+
+    fn process_audio_buffer(&mut self, buffer: &mut Buffer) -> Result<()> {
+        if let Some(resampler) = &mut self.resampler {
+            if let Some(resampler_buffer) = &mut self.resampler_buffer {
+                //TODO: deal with a create mono signal or send out multiple channels?
+                resampler.process_into_buffer(&buffer.as_slice(), resampler_buffer, None)?;
+                //TODO: we only use the first channel
+                for &sample in &resampler_buffer[0] {
+                    if sample == 0.0 {
+                        continue;
+                    }
+                    let send_result = self
+                        .sender
+                        .send(OscChannelMessageType::Audio(OscAudioType { value: sample }));
+                    if send_result.is_err() {
+                        nih_error!("Failed to process audio {:?}", send_result.unwrap_err());
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -424,29 +476,35 @@ fn osc_client_worker(
     param_address_base: String,
     recv: Receiver<OscChannelMessageType>,
 ) -> () {
-    //TODO: remove expects
-    //TODO: handle empty osc_address_base
-    let mut address_base = param_address_base;
+    let mut address_base = format_osc_address_base(&param_address_base);
+    let mut connected = true; //We assume the socket we get is good
     while let Some(channel_message) = recv.recv().ok() {
         let osc_message = match channel_message {
             OscChannelMessageType::Exit => break,
             OscChannelMessageType::ConnectionChange(message) => {
                 let ip_port = format!("{}:{}", message.ip, message.port);
                 nih_trace!("Connection Change: {}", ip_port);
-                socket.connect(ip_port).expect("Connection failed");
+                let socket_result = socket.connect(&ip_port);
+                match socket_result {
+                    Ok(_) => connected = true,
+                    Err(e) => {
+                        connected = false;
+                        nih_error!("Failed to connect to {} {:?}", ip_port, e);
+                    }
+                }
                 continue;
             }
             OscChannelMessageType::AddressBaseChange(message) => {
-                address_base = message.address;
+                address_base = format_osc_address_base(&message.address);
                 nih_trace!("AddressBase Change: {}", address_base);
                 continue;
             }
             OscChannelMessageType::Param(message) => OscMessage {
-                addr: format!("/{}/param/{}", address_base, message.name),
+                addr: format!("{}/param/{}", address_base, message.name),
                 args: vec![OscType::Float(message.value)],
             },
             OscChannelMessageType::NoteOn(message) => OscMessage {
-                addr: format!("/{}/note_on", address_base),
+                addr: format!("{}/note_on", address_base),
                 args: vec![
                     OscType::Int(message.channel as i32),
                     OscType::Int(message.note as i32),
@@ -454,7 +512,7 @@ fn osc_client_worker(
                 ],
             },
             OscChannelMessageType::NoteOff(message) => OscMessage {
-                addr: format!("/{}/note_off", address_base),
+                addr: format!("{}/note_off", address_base),
                 args: vec![
                     OscType::Int(message.channel as i32),
                     OscType::Int(message.note as i32),
@@ -462,17 +520,39 @@ fn osc_client_worker(
                 ],
             },
             OscChannelMessageType::Audio(message) => OscMessage {
-                addr: format!("/{}/audio", address_base),
+                addr: format!("{}/audio", address_base),
                 args: vec![OscType::Float(message.value)],
             },
         };
-        let packet = OscPacket::Message(osc_message);
-        let buf = rosc::encoder::encode(&packet).expect("Bad OSC Data");
-        let len = socket.send(&buf[..]).expect("Failed to send data");
-        if len != buf.len() {
-            nih_trace!("UDP packet not fully sent");
+        if connected {
+            let packet = OscPacket::Message(osc_message);
+            let buf = match rosc::encoder::encode(&packet) {
+                Ok(buf) => buf,
+                Err(e) => {
+                    nih_error!("Failed to encode osc message {:?}", e);
+                    continue;
+                }
+            };
+            let len = match socket.send(&buf[..]) {
+                Ok(buf) => buf,
+                Err(e) => {
+                    nih_error!("Failed to send osc message {:?}", e);
+                    continue;
+                }
+            };
+            if len != buf.len() {
+                nih_trace!("UDP packet not fully sent");
+            }
+            nih_trace!("Sent {:?} packet", packet);
         }
-        nih_trace!("Sent {:?} packet", packet);
+    }
+}
+
+fn format_osc_address_base(raw_base: &str) -> String {
+    if raw_base.is_empty() {
+        return "".to_string();
+    } else {
+        return format!("/{}", raw_base); //Prefix with slash
     }
 }
 
@@ -480,7 +560,11 @@ impl ClapPlugin for DawOut {
     const CLAP_ID: &'static str = "com.gamingrobot.daw-out";
     const CLAP_DESCRIPTION: Option<&'static str> =
         Some("Outputs MIDI/OSC information from the DAW");
-    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::NoteEffect, ClapFeature::Utility];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::NoteEffect,
+        ClapFeature::Utility,
+        ClapFeature::Analyzer,
+    ];
 
     const CLAP_MANUAL_URL: Option<&'static str> = None;
 
