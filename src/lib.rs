@@ -316,10 +316,10 @@ impl Plugin for DawOut {
                 return false;
             }
             nih_trace!("Connected!");
-            nih_log!("Connected to: {}", ip_port);
+            nih_trace!("Connected to: {}", ip_port);
 
             let address_base = self.params.osc_address_base.read().to_string();
-            nih_log!("OSC Address Base: {}", address_base);
+            nih_trace!("OSC Address Base: {}", address_base);
 
             if let Some(receiver) = std::mem::replace(&mut self.receiver, None) {
                 let client_thread =
@@ -344,9 +344,11 @@ impl Plugin for DawOut {
                     connection_send_result.unwrap_err()
                 );
             }
+            let address_base = self.params.osc_address_base.read().to_string();
+            nih_trace!("OSC Address Base: {}", address_base);
             let address_send_result = self.sender.send(OscChannelMessageType::AddressBaseChange(
                 OscAddressBaseType {
-                    address: self.params.osc_address_base.read().to_string(),
+                    address: address_base,
                 },
             ));
             if address_send_result.is_err() {
