@@ -79,13 +79,7 @@ impl Default for DawOut {
 
 impl Drop for DawOut {
     fn drop(&mut self) {
-        let exit_result = self.sender.send(OscChannelMessageType::Exit);
-        if exit_result.is_err() {
-            nih_error!(
-                "Failed to send shutdown to background thread {:?}",
-                exit_result.unwrap_err()
-            );
-        }
+        self.kill_background_thread();
     }
 }
 
@@ -296,35 +290,37 @@ impl Plugin for DawOut {
             self.resampler_buffer = Some(resampler.output_buffer_allocate());
         }
 
-        //Setup OSC client
-        let socket = match UdpSocket::bind("0.0.0.0:0") {
-            Ok(socket) => socket,
-            Err(e) => {
-                nih_error!("Failed to bind socket {:?}", e);
-                return false;
-            }
-        };
-        let ip_port = format!(
-            "{}:{}",
-            *self.params.osc_server_address.read(),
-            *self.params.osc_server_port.read()
-        );
-        nih_trace!("Connecting: {}", ip_port);
-        let connect_result = socket.connect(&ip_port);
-        if connect_result.is_err() {
-            nih_error!(
-                "Failed to connect socket to {} {:?}",
-                ip_port,
-                connect_result.unwrap_err()
-            );
-            return false;
-        }
-        nih_trace!("Connected!");
-
-        let address_base = self.params.osc_address_base.read().to_string();
-
+        //Setup OSC background thread
         //Dont remake the background thread if its already running
         if self.osc_thread.is_none() {
+            let socket = match UdpSocket::bind("0.0.0.0:0") {
+                Ok(socket) => socket,
+                Err(e) => {
+                    nih_error!("Failed to bind socket {:?}", e);
+                    return false;
+                }
+            };
+            let ip_port = format!(
+                "{}:{}",
+                *self.params.osc_server_address.read(),
+                *self.params.osc_server_port.read()
+            );
+            nih_trace!("Connecting: {}", ip_port);
+            let connect_result = socket.connect(&ip_port);
+            if connect_result.is_err() {
+                nih_error!(
+                    "Failed to connect socket to {} {:?}",
+                    ip_port,
+                    connect_result.unwrap_err()
+                );
+                return false;
+            }
+            nih_trace!("Connected!");
+            nih_log!("Connected to: {}", ip_port);
+
+            let address_base = self.params.osc_address_base.read().to_string();
+            nih_log!("OSC Address Base: {}", address_base);
+
             if let Some(receiver) = std::mem::replace(&mut self.receiver, None) {
                 let client_thread =
                     thread::spawn(move || osc_client_worker(socket, address_base, receiver));
@@ -334,11 +330,39 @@ impl Plugin for DawOut {
                 nih_error!("Failed get thread channel receiver");
                 return false;
             }
+        } else {
+            //Threads already alive just update params
+            let connection_send_result =
+                self.sender
+                    .send(OscChannelMessageType::ConnectionChange(OscConnectionType {
+                        ip: self.params.osc_server_address.read().to_string(),
+                        port: *self.params.osc_server_port.read(),
+                    }));
+            if connection_send_result.is_err() {
+                nih_error!(
+                    "Failed to send ConnectionChange update {:?}",
+                    connection_send_result.unwrap_err()
+                );
+            }
+            let address_send_result = self.sender.send(OscChannelMessageType::AddressBaseChange(
+                OscAddressBaseType {
+                    address: self.params.osc_address_base.read().to_string(),
+                },
+            ));
+            if address_send_result.is_err() {
+                nih_error!(
+                    "Failed to send AddressBaseChange update {:?}",
+                    address_send_result.unwrap_err()
+                );
+            }
         }
         true
     }
 
-    fn deactivate(&mut self) {}
+    fn deactivate(&mut self) {
+        nih_trace!("Deactivate Called");
+        self.kill_background_thread();
+    }
 
     fn process(
         &mut self,
@@ -464,6 +488,17 @@ impl DawOut {
         }
         Ok(())
     }
+
+    fn kill_background_thread(&mut self) {
+        let exit_result = self.sender.send(OscChannelMessageType::Exit);
+        if exit_result.is_err() {
+            nih_error!(
+                "Failed to send shutdown to background thread {:?}",
+                exit_result.unwrap_err()
+            );
+        }
+        self.osc_thread = None;
+    }
 }
 
 // /<osc_address_base>/param/<param_name>
@@ -476,6 +511,8 @@ fn osc_client_worker(
     param_address_base: String,
     recv: Receiver<OscChannelMessageType>,
 ) -> () {
+    nih_trace!("Background thread spawned!");
+    nih_trace!("Background thread OSC Address Base: {}", param_address_base);
     let mut address_base = format_osc_address_base(&param_address_base);
     let mut connected = true; //We assume the socket we get is good
     while let Some(channel_message) = recv.recv().ok() {
