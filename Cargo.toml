@@ -24,3 +24,6 @@ baseview = { git = 'https://github.com/gamingrobot/baseview', branch = "focus-ha
 
 [workspace]
 members = ["xtask"]
+
+[profile.dev.package.vizia_core] 
+opt-level = 2
