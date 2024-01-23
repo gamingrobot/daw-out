@@ -9,17 +9,17 @@ license = "MIT"
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "f557707b097201f175c429d9b41c9860fab71f44", features = ["standalone"] } #, features = ["assert_process_allocs", "standalone"] }
-nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "f557707b097201f175c429d9b41c9860fab71f44" }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "7a01b57735bb0cb18da048e4eb5b303b85b30c4d", features = ["standalone"] } #, features = ["assert_process_allocs", "standalone"] }
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git",  rev = "7a01b57735bb0cb18da048e4eb5b303b85b30c4d" }
 # nih_plug = { path = "../nih-plug", features = ["standalone"]}
 # nih_plug_vizia = { path = "../nih-plug/nih_plug_vizia" }
-rosc = "0.8.0"
+rosc = "0.10.1"
 crossbeam-channel = "0.5.4"
 parking_lot = "0.12.0"
-rubato = "0.12.0"
+rubato = "0.14.1"
 anyhow = "1.0"
 
-[patch."https://github.com/robbert-vdh/baseview.git"]
+[patch."https://github.com/RustAudio/baseview.git"]
 baseview = { git = 'https://github.com/gamingrobot/baseview', branch = "focus-hack" } # hack to capture input focus on left click
 
 [workspace]

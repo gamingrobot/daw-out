@@ -14,7 +14,7 @@ use std::thread;
 use std::thread::JoinHandle;
 
 mod editor;
-mod param_view;
+mod subviews;
 
 pub struct DawOut {
     params: Arc<DawOutParams>,
@@ -118,6 +118,8 @@ struct OscConnectionType {
 struct OscAddressBaseType {
     address: String,
 }
+
+
 
 enum OscChannelMessageType {
     Exit,
@@ -232,20 +234,29 @@ impl Plugin for DawOut {
 
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    const DEFAULT_NUM_INPUTS: u32 = 2;
-    const DEFAULT_NUM_OUTPUTS: u32 = 2;
-
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     const HARD_REALTIME_ONLY: bool = true;
+
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: NonZeroU32::new(2),
+        main_output_channels: NonZeroU32::new(2),
+
+        aux_input_ports: &[],
+        aux_output_ports: &[],
+        names: PortNames::const_default(),
+    }];
+
+    type SysExMessage = ();
+    type BackgroundTask = ();
 
     fn params(&self) -> Arc<dyn Params> {
         nih_trace!("Params Called");
         self.params.clone() as Arc<dyn Params>
     }
 
-    fn editor(&self) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         nih_trace!("Editor Called");
         editor::create(
             self.params.clone(),
@@ -256,9 +267,9 @@ impl Plugin for DawOut {
 
     fn initialize(
         &mut self,
-        _bus_config: &BusConfig,
+        _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext,
+        _context: &mut impl InitContext<Self>,
     ) -> bool {
         nih_trace!("Initialize Called");
 
@@ -271,7 +282,7 @@ impl Plugin for DawOut {
         self.input_sample_rate = buffer_config.sample_rate;
         self.resampler = match FftFixedOut::<f32>::new(
             self.input_sample_rate as usize / 100, //TODO: is this right?
-            self.params.osc_sample_rate.value as usize,
+            self.params.osc_sample_rate.value() as usize,
             100,
             2,
             2,
@@ -287,7 +298,7 @@ impl Plugin for DawOut {
         };
 
         if let Some(resampler) = &self.resampler {
-            self.resampler_buffer = Some(resampler.output_buffer_allocate());
+            self.resampler_buffer = Some(resampler.output_buffer_allocate(false));
         }
 
         //Setup OSC background thread
@@ -370,7 +381,7 @@ impl Plugin for DawOut {
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        context: &mut impl ProcessContext,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         //Process Dirty Params
         let param_result = self.process_params();
@@ -378,7 +389,7 @@ impl Plugin for DawOut {
             nih_error!("Failed to send params {:?}", param_result.unwrap_err());
         }
         //Process Note Events
-        if self.params.flag_send_midi.value {
+        if self.params.flag_send_midi.value() {
             while let Some(event) = context.next_event() {
                 nih_trace!("NoteEvent: {:?}", event);
                 let message_result = self.process_event(&event);
@@ -391,19 +402,13 @@ impl Plugin for DawOut {
             }
         }
         //Process Audio Events
-        if self.params.flag_send_audio.value {
+        if self.params.flag_send_audio.value() {
             let audio_result = self.process_audio_buffer(buffer);
             if audio_result.is_err() {
                 nih_error!("Failed to process Audio {:?}", audio_result.unwrap_err());
             }
         }
         ProcessStatus::Normal
-    }
-
-    fn accepts_bus_config(&self, config: &BusConfig) -> bool {
-        nih_trace!("BusConfig: {:?}", config);
-        config.num_input_channels == Self::DEFAULT_NUM_INPUTS
-            && config.num_output_channels == Self::DEFAULT_NUM_OUTPUTS
     }
 }
 
@@ -425,17 +430,17 @@ impl DawOut {
             .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
-            nih_trace!("Param Dirty: {} {}", param.name(), param.value);
+            nih_trace!("Param Dirty: {} {}", param.name(), param.value());
             self.sender
                 .send(OscChannelMessageType::Param(OscParamType {
                     name: param.name().to_string(), //TODO: allocation
-                    value: param.value,
+                    value: param.value(),
                 }))?;
         }
         Ok(())
     }
 
-    fn process_event(&self, event: &NoteEvent) -> Result<()> {
+    fn process_event(&self, event: &NoteEvent<()>) -> Result<()> {
         match *event {
             NoteEvent::NoteOn {
                 timing: _,
@@ -614,7 +619,7 @@ impl ClapPlugin for DawOut {
 
 impl Vst3Plugin for DawOut {
     const VST3_CLASS_ID: [u8; 16] = *b"grbt-daw-outputs";
-    const VST3_CATEGORIES: &'static str = "Instrument|Tools";
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Instrument, Vst3SubCategory::Tools];
 }
 
 nih_export_clap!(DawOut);
