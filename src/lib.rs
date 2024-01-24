@@ -298,7 +298,7 @@ impl Plugin for DawOut {
         };
 
         if let Some(resampler) = &self.resampler {
-            self.resampler_buffer = Some(resampler.output_buffer_allocate(false));
+            self.resampler_buffer = Some(resampler.output_buffer_allocate(true));
         }
 
         //Setup OSC background thread
@@ -487,7 +487,7 @@ impl DawOut {
                         .sender
                         .send(OscChannelMessageType::Audio(OscAudioType { value: sample }));
                     if send_result.is_err() {
-                        nih_error!("Failed to process audio {:?}", send_result.unwrap_err());
+                        nih_error!("Failed to send processed audio {:?}", send_result.unwrap_err());
                         break;
                     }
                 }
