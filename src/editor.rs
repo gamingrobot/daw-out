@@ -17,6 +17,7 @@ struct DawOutEditor {
     sender: Arc<Sender<OscChannelMessageType>>,
     params: Arc<DawOutParams>,
     settings: OscSettings,
+    log: Vec<String>
 }
 
 pub struct OscSettings {
@@ -57,6 +58,7 @@ impl Model for DawOutEditor {
                     self.settings.osc_server_address,
                     self.settings.osc_server_port
                 );
+                self.log.push(format!("Connecting to: {}:{}", self.settings.osc_server_address, self.settings.osc_server_port));
                 let send_result =
                     self.sender
                     .send(OscChannelMessageType::ConnectionChange(OscConnectionType {
@@ -65,10 +67,12 @@ impl Model for DawOutEditor {
                     }));
                 if send_result.is_err() {
                     nih_error!("Failed to send ConnectionChange update {:?}", send_result.unwrap_err());
+                    self.log.push(format!("Failed change connection"));
                 }
             }
             DawOutEditorEvent::AddressBaseChange => {
                 nih_trace!("AddressBase Changed: {}", self.settings.osc_address_base);
+                self.log.push(format!("Base Address changed to: {}", self.settings.osc_address_base));
                 let send_result = self.sender.send(OscChannelMessageType::AddressBaseChange(
                     OscAddressBaseType {
                         address: self.settings.osc_address_base.clone(),
@@ -76,6 +80,7 @@ impl Model for DawOutEditor {
                 ));
                 if send_result.is_err() {
                     nih_error!("Failed to send AddressBaseChange update {:?}", send_result.unwrap_err());
+                    self.log.push(format!("Failed to update base address"));
                 }
             }
         });
@@ -99,6 +104,7 @@ pub(crate) fn create(
         DawOutEditor {
             sender: sender.clone(),
             params: params.clone(),
+            log: Vec::new(),
             settings: OscSettings {
                 osc_server_address: params.osc_server_address.read().to_string(),
                 osc_server_port: *params.osc_server_port.read(),
@@ -117,9 +123,8 @@ pub(crate) fn create(
                 .font_size(40.0 * POINT_SCALE)
                 .class("title");
             HStack::new(cx, |cx| {
-                SettingsView::new(cx, DawOutEditor::settings, DawOutEditor::params);
+                SettingsView::new(cx, DawOutEditor::settings, DawOutEditor::params, DawOutEditor::log);
                 ParamView::new(cx, DawOutEditor::params);
-                //TODO Errors View
             });
         });
     })

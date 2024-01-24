@@ -75,10 +75,11 @@ impl View for ParamView {
 pub struct SettingsView;
 
 impl SettingsView {
-    pub fn new<S,P>(cx: &mut Context, settings: S, params: P) -> Handle<Self>
+    pub fn new<S,P,L>(cx: &mut Context, settings: S, params: P, log: L) -> Handle<Self>
     where
         S: Lens<Target = OscSettings> + Copy,
         P: Lens<Target = Arc<DawOutParams>> + Copy,
+        L: Lens<Target = Vec<String>>,
     {
         Self.build(cx, |cx| {
             HStack::new(cx, |cx| {
@@ -88,7 +89,7 @@ impl SettingsView {
                         //TODO: validate
                         cx.emit(DawOutEditorEvent::SetOscServerAddress(text));
                     })
-                    .on_blur(|cx| {
+                    .on_submit(|cx,  _, _| {
                         cx.emit(DawOutEditorEvent::ConnectionChange);
                     })
                     .width(Pixels(115.0)); //180 - 60 - 5
@@ -101,7 +102,7 @@ impl SettingsView {
                             cx.toggle_class("invalid", true);
                         }
                     })
-                    .on_blur(|cx| {
+                    .on_submit(|cx,  _, _| {
                         cx.emit(DawOutEditorEvent::ConnectionChange);
                     })
                     .width(Pixels(60.0));
@@ -115,7 +116,7 @@ impl SettingsView {
                         //TODO: validate
                         cx.emit(DawOutEditorEvent::SetOscAddressBase(text));
                     })
-                    .on_blur(|cx| {
+                    .on_submit(|cx,  _, _| {
                         cx.emit(DawOutEditorEvent::AddressBaseChange);
                     })
                     .width(Pixels(180.0));
@@ -133,14 +134,11 @@ impl SettingsView {
                 .class("widget");
             })
             .class("row");
-            // HStack::new(cx, |cx| {
-            //     Label::new(cx, "OSC Audio Sample Rate").class("label");
-            //     ParamSlider::new(cx, DawOutEditor::params, |params| {
-            //         &params.osc_sample_rate
-            //     })
-            //     .class("widget");
-            // })
-            // .class("row")
+            VirtualList::new(cx, log, 20.0, |cx, _index, item| {
+                return Label::new(cx, item).left(Pixels(0.0)).class("label");
+            })
+            .height(Pixels(180.0))
+            .class("row");
         })
     }
 }
